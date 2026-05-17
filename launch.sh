@@ -128,6 +128,7 @@ cat >> "$SCRIPT" << SBATCH_DIRECTIVES
 #SBATCH --cpus-per-task=288
 #SBATCH --mem=460000
 #SBATCH --no-requeue
+#SBATCH --partition=debug
 SBATCH_DIRECTIVES
 
 cat >> "$SCRIPT" << 'BODY_HEAD'
