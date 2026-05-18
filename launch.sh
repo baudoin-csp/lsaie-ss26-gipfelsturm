@@ -1,32 +1,87 @@
 #!/bin/bash
 #
-# Usage: ./launch.sh <mode> <model_size> [steps] [nodes]
+# Usage: ./launch.sh <mode> <model_size> [steps] [nodes] [options]
 #
 # Modes:     throughput  (50 steps, with W&B)
 #            train       (N steps, with W&B and Tensorboard)
 #
 # Sizes:     125m, 350m, 760m, 1.5b, 3b, 8b
 #
-# Steps:     required for train mode (e.g., 1000, 5000, 15000)
-# Nodes:     optional, default 4 (max 8)
+# Steps:     required for train mode; positional after model_size
+# Nodes:     optional positional after steps (default 1)
+#
+# Options (can appear in any order after mode and model_size):
+#   --tp N              Tensor parallel size (default: 1)
+#   --sp                Enable sequence parallelism (requires --tp > 1)
+#   --tp-overlap        Enable TP communication/GEMM overlap (requires --sp)
+#   --fp8               Enable FP8 training via TransformerEngine
+#   --fp8-opt           Enable FP8 optimizer states (stacks on --fp8)
+#   --fa                Enable FlashAttention
+#   --no-jit            Disable JIT fuser (torch.compile for kernel fusions)
+#   --gbs N             Override global batch size (default: 256)
+#   --mbs N             Override micro-batch size (model-specific default)
+#   --profile           Enable NSYS profiling (steps 10-20)
+#   --zero {2,3}        Enable ZeRO-2 or ZeRO-3 via Megatron FSDP
+#   --recompute         Enable gradient checkpointing (selective recompute)
 #
 # Examples:  ./launch.sh throughput 760m
-#            ./launch.sh throughput 8b 50 1
-#            ./launch.sh train 760m 5000
-#            ./launch.sh train 1.5b 3000 8
+#            ./launch.sh throughput 1.5b 50 1 --tp 4 --sp --fp8
+#            ./launch.sh throughput 3b 50 1 --fp8 --fp8-opt --mbs 8
+#            ./launch.sh train 760m 5000 --tp 2
+#            ./launch.sh throughput 1.5b --profile
 
 set -euo pipefail
 
 source "$(dirname "$0")/config.sh"
 
-MODE=${1:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes]}
-MODEL_SIZE=${2:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes]}
+MODE=${1:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes] [options]}
+MODEL_SIZE=${2:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes] [options]}
+shift 2
+
+################ Parse remaining args ################
+TP=1
+ENABLE_SP=false
+ENABLE_TP_OVERLAP=false
+ENABLE_FP8=false
+ENABLE_FP8_OPT=false
+ENABLE_FA=false
+ENABLE_NO_JIT=false
+ENABLE_PROFILE=false
+ENABLE_RECOMPUTE=false
+GBS=256
+MBS_OVERRIDE=""
+ZERO_STAGE=""
+
+_POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --tp)           TP="${2:?--tp requires N}"; shift 2;;
+        --sp)           ENABLE_SP=true; shift;;
+        --tp-overlap)   ENABLE_TP_OVERLAP=true; shift;;
+        --fp8)          ENABLE_FP8=true; shift;;
+        --fp8-opt)      ENABLE_FP8_OPT=true; shift;;
+        --fa)           ENABLE_FA=true; shift;;
+        --no-jit)       ENABLE_NO_JIT=true; shift;;
+        --profile)      ENABLE_PROFILE=true; shift;;
+        --recompute)    ENABLE_RECOMPUTE=true; shift;;
+        --gbs)          GBS="${2:?--gbs requires N}"; shift 2;;
+        --mbs)          MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
+        --zero)
+            ZERO_STAGE="${2:?--zero requires 2 or 3}"
+            if [[ "$ZERO_STAGE" != "2" && "$ZERO_STAGE" != "3" ]]; then
+                echo "--zero must be 2 or 3"; exit 1
+            fi
+            shift 2;;
+        --*) echo "Unknown option: $1"; exit 1;;
+        *) _POSITIONAL+=("$1"); shift;;
+    esac
+done
 
 ################ Mode config ################
 case $MODE in
     throughput)
-        TRAINING_STEPS=${3:-50}
-        NODES=${4:-4}
+        TRAINING_STEPS=${_POSITIONAL[0]:-50}
+        NODES=${_POSITIONAL[1]:-1}
         TIME=00:30:00
         EVAL_INTERVAL=$TRAINING_STEPS
         EVAL_ITERS=0
@@ -35,8 +90,8 @@ case $MODE in
         WANDB=true
         ;;
     train)
-        TRAINING_STEPS=${3:?Usage: ./launch.sh train <model_size> <steps> [nodes]}
-        NODES=${4:-4}
+        TRAINING_STEPS=${_POSITIONAL[0]:?Usage: ./launch.sh train <model_size> <steps> [nodes]}
+        NODES=${_POSITIONAL[1]:-1}
         TIME=02:30:00
         EVAL_INTERVAL=1000
         EVAL_ITERS=10
@@ -85,9 +140,22 @@ case $MODEL_SIZE in
         ;;
 esac
 
-GBS=256
+[[ -n "$MBS_OVERRIDE" ]] && MBS="$MBS_OVERRIDE"
+
 SEQ_LEN=4096
-JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n"
+
+################ Build experiment tag ################
+EXP_TAGS="${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n-tp${TP}"
+$ENABLE_SP         && EXP_TAGS="${EXP_TAGS}-sp"
+$ENABLE_TP_OVERLAP && EXP_TAGS="${EXP_TAGS}-tpoverlap"
+$ENABLE_FP8        && EXP_TAGS="${EXP_TAGS}-fp8"
+$ENABLE_FP8_OPT    && EXP_TAGS="${EXP_TAGS}-fp8opt"
+$ENABLE_FA         && EXP_TAGS="${EXP_TAGS}-fa"
+$ENABLE_NO_JIT     && EXP_TAGS="${EXP_TAGS}-nojit"
+$ENABLE_RECOMPUTE  && EXP_TAGS="${EXP_TAGS}-recompute"
+$ENABLE_PROFILE    && EXP_TAGS="${EXP_TAGS}-profile"
+[[ -n "$ZERO_STAGE" ]] && EXP_TAGS="${EXP_TAGS}-zero${ZERO_STAGE}"
+JOB_NAME="gipfel-${EXP_TAGS}"
 
 ################ W&B block ################
 if [ "$WANDB" = true ]; then
@@ -105,6 +173,46 @@ else
 fi'
 else
     WANDB_BLOCK='export WANDB_MODE=disabled'
+fi
+
+################ Build optional args for sbatch ################
+EXTRA_ARGS=""
+$ENABLE_FA         && EXTRA_ARGS="$EXTRA_ARGS --use-flash-attn"
+$ENABLE_NO_JIT     && EXTRA_ARGS="$EXTRA_ARGS --disable-jit-fuser"
+$ENABLE_RECOMPUTE  && EXTRA_ARGS="$EXTRA_ARGS --recompute-activations"
+
+if $ENABLE_FP8; then
+    EXTRA_ARGS="$EXTRA_ARGS --fp8-format hybrid --fp8-amax-history-len 1024 --fp8-amax-compute-algo max"
+fi
+if $ENABLE_FP8_OPT; then
+    EXTRA_ARGS="$EXTRA_ARGS --exp-avg-dtype fp8 --exp-avg-sq-dtype fp8"
+fi
+if [[ -n "$ZERO_STAGE" ]]; then
+    case $ZERO_STAGE in
+        2) EXTRA_ARGS="$EXTRA_ARGS --use-megatron-fsdp --data-parallel-sharding-strategy optim_grads";;
+        3) EXTRA_ARGS="$EXTRA_ARGS --use-megatron-fsdp --data-parallel-sharding-strategy optim_grads_params";;
+    esac
+fi
+
+################ Build DISTRIBUTED_ARGS content ################
+DISTRIBUTED_ARGS_CONTENT="    --tensor-model-parallel-size ${TP}
+    --pipeline-model-parallel-size 1
+    --use-distributed-optimizer
+    --overlap-grad-reduce
+    --overlap-param-gather"
+$ENABLE_SP         && DISTRIBUTED_ARGS_CONTENT="${DISTRIBUTED_ARGS_CONTENT}
+    --sequence-parallel"
+$ENABLE_TP_OVERLAP && DISTRIBUTED_ARGS_CONTENT="${DISTRIBUTED_ARGS_CONTENT}
+    --tp-comm-overlap"
+
+################ NSYS profiling ################
+NSYS_CMD=""
+NSYS_MKDIR=""
+if $ENABLE_PROFILE; then
+    NSYS_OUTPUT="/iopsstor/scratch/cscs/\${USER}/gipfelsturm/nsys/${JOB_NAME}-\${SLURM_PROCID}"
+    NSYS_CMD="nsys profile --trace=cuda,nvtx,osrt --output=${NSYS_OUTPUT} --capture-range=cudaProfilerApi --capture-range-end=stop --force-overwrite=true"
+    NSYS_MKDIR="mkdir -p /iopsstor/scratch/cscs/\${USER}/gipfelsturm/nsys"
+    EXTRA_ARGS="$EXTRA_ARGS --profile --profile-step-start 10 --profile-step-end 20"
 fi
 
 ################ Generate script ################
@@ -132,7 +240,7 @@ SBATCH_DIRECTIVES
 
 cat >> "$SCRIPT" << 'BODY_HEAD'
 
-echo "START TIME: \$(date)"
+echo "START TIME: $(date)"
 
 ################ Configs ################
 BODY_HEAD
@@ -154,7 +262,7 @@ TRAINING_STEPS=${TRAINING_STEPS}
 
 # Logging
 PROJECT_NAME=gipfelsturm
-EXP_NAME=${MODE}-${MODEL_SIZE}-\${SLURM_NNODES}n
+EXP_NAME=${EXP_TAGS}
 LOG_DIR=/iopsstor/scratch/cscs/\$USER/gipfelsturm/\$PROJECT_NAME/\$EXP_NAME
 TENSORBOARD_DIR=\$LOG_DIR/tensorboard
 CONFIGS
@@ -247,18 +355,21 @@ MIXED_PRECISION_ARGS=(
     --bf16
 )
 
+REST
+
+cat >> "$SCRIPT" << DISTRIBUTED_BLOCK
+
 DISTRIBUTED_ARGS=(
-    --tensor-model-parallel-size 1
-    --pipeline-model-parallel-size 1
-    --use-distributed-optimizer
-    --overlap-grad-reduce
-    --overlap-param-gather
+${DISTRIBUTED_ARGS_CONTENT}
 )
+DISTRIBUTED_BLOCK
+
+cat >> "$SCRIPT" << 'LOGGING_HEAD'
 
 LOGGING_ARGS=(
     --log-throughput
     --log-progress
-REST
+LOGGING_HEAD
 
 cat >> "$SCRIPT" << LOGGING_EXTRA
 ${LOGGING_EXTRA}
@@ -289,20 +400,25 @@ TORCHRUN_ARGS=(
     --tee 3
 )
 
-TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $MEGATRON_LM_DIR/pretrain_gpt.py \
-    ${TRANSFORMER_ENGINE_ARGS[@]} \
-    ${NETWORK_SIZE_ARGS[@]} \
-    ${TRAINING_ARGS[@]} \
-    ${REGULARIZATION_ARGS[@]} \
-    ${LEARNING_RATE_ARGS[@]} \
-    ${INITIALIZATION_ARGS[@]} \
-    ${MIXED_PRECISION_ARGS[@]} \
-    ${DISTRIBUTED_ARGS[@]} \
-    ${LOGGING_ARGS[@]} \
-    ${TOKENIZER_ARGS[@]} \
-    ${DATA_ARGS[@]}"
+TRAINING_CMD="torchrun \${TORCHRUN_ARGS[@]} \$MEGATRON_LM_DIR/pretrain_gpt.py \
+    \${TRANSFORMER_ENGINE_ARGS[@]} \
+    \${NETWORK_SIZE_ARGS[@]} \
+    \${TRAINING_ARGS[@]} \
+    \${REGULARIZATION_ARGS[@]} \
+    \${LEARNING_RATE_ARGS[@]} \
+    \${INITIALIZATION_ARGS[@]} \
+    \${MIXED_PRECISION_ARGS[@]} \
+    \${DISTRIBUTED_ARGS[@]} \
+    \${LOGGING_ARGS[@]} \
+    \${TOKENIZER_ARGS[@]} \
+    \${DATA_ARGS[@]}"
 
 TOKENIZER
+
+cat >> "$SCRIPT" << EXTRA_ARGS_SECTION
+
+TRAINING_CMD="\$TRAINING_CMD ${EXTRA_ARGS}"
+EXTRA_ARGS_SECTION
 
 cat >> "$SCRIPT" << 'WANDB_PLACEHOLDER'
 WANDB_PLACEHOLDER
@@ -313,12 +429,13 @@ cat >> "$SCRIPT" << WANDB_INSERT
 ${WANDB_BLOCK}
 WANDB_INSERT
 
-cat >> "$SCRIPT" << 'FOOTER'
+cat >> "$SCRIPT" << FOOTER
 
-echo "CMD: $TRAINING_CMD"
-srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "numactl --membind=0-3 $TRAINING_CMD"
+echo "CMD: \$TRAINING_CMD"
+${NSYS_MKDIR}
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task \$SLURM_CPUS_PER_TASK --wait 60 bash -c "numactl --membind=0-3 ${NSYS_CMD} \$TRAINING_CMD"
 
-echo "END TIME: $(date)"
+echo "END TIME: \$(date)"
 FOOTER
 
 chmod +x "$SCRIPT"
