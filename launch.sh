@@ -218,7 +218,6 @@ TRAINING_ARGS=(
     --no-check-for-nan-in-loss-and-grad
     --manual-gc
     --manual-gc-interval 50
-    --use-flash-attn
 )
 
 REGULARIZATION_ARGS=(
