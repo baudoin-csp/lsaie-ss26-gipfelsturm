@@ -400,18 +400,18 @@ TORCHRUN_ARGS=(
     --tee 3
 )
 
-TRAINING_CMD="torchrun \${TORCHRUN_ARGS[@]} \$MEGATRON_LM_DIR/pretrain_gpt.py \
-    \${TRANSFORMER_ENGINE_ARGS[@]} \
-    \${NETWORK_SIZE_ARGS[@]} \
-    \${TRAINING_ARGS[@]} \
-    \${REGULARIZATION_ARGS[@]} \
-    \${LEARNING_RATE_ARGS[@]} \
-    \${INITIALIZATION_ARGS[@]} \
-    \${MIXED_PRECISION_ARGS[@]} \
-    \${DISTRIBUTED_ARGS[@]} \
-    \${LOGGING_ARGS[@]} \
-    \${TOKENIZER_ARGS[@]} \
-    \${DATA_ARGS[@]}"
+TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $MEGATRON_LM_DIR/pretrain_gpt.py \
+    ${TRANSFORMER_ENGINE_ARGS[@]} \
+    ${NETWORK_SIZE_ARGS[@]} \
+    ${TRAINING_ARGS[@]} \
+    ${REGULARIZATION_ARGS[@]} \
+    ${LEARNING_RATE_ARGS[@]} \
+    ${INITIALIZATION_ARGS[@]} \
+    ${MIXED_PRECISION_ARGS[@]} \
+    ${DISTRIBUTED_ARGS[@]} \
+    ${LOGGING_ARGS[@]} \
+    ${TOKENIZER_ARGS[@]} \
+    ${DATA_ARGS[@]}"
 
 TOKENIZER
 
