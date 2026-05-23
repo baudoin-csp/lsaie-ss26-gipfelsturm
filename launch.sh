@@ -29,10 +29,14 @@ MODEL_SIZE=${2:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes]}
 # Parse optional flags from remaining args
 USE_LIGER=false
 USE_FLASH_ATTN=false
+USE_COMPILE=false
+USE_NSYS=false
 for arg in "${@:3}"; do
     case $arg in
         --liger) USE_LIGER=true ;;
         --flash-attn) USE_FLASH_ATTN=true ;;
+        --compile) USE_COMPILE=true ;;
+        --nsys) USE_NSYS=true ;;
     esac
 done
 
@@ -106,6 +110,8 @@ SEQ_LEN=4096
 OPT_SUFFIX=""
 [ "$USE_FLASH_ATTN" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-fa"
 [ "$USE_LIGER" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-liger"
+[ "$USE_COMPILE" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-compile"
+[ "$USE_NSYS" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-nsys"
 JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n${OPT_SUFFIX}"
 
 ################ W&B block ################
@@ -311,6 +317,9 @@ TORCHRUN_ARGS=(
 FLASH_ATTN_FLAG=""
 [ "${USE_FLASH_ATTN}" = true ] && FLASH_ATTN_FLAG="--use-flash-attn"
 
+COMPILE_FLAG=""
+[ "${USE_COMPILE}" = true ] && COMPILE_FLAG="--torch-compile"
+
 if [ "${USE_LIGER}" = true ]; then
     TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_liger.py"
     export MEGATRON_LM_DIR
@@ -318,11 +327,12 @@ else
     TRAIN_SCRIPT="$MEGATRON_LM_DIR/pretrain_gpt.py"
 fi
 
-TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
+TORCHRUN_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
     $FLASH_ATTN_FLAG \
+    $COMPILE_FLAG \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
@@ -331,6 +341,19 @@ TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
+
+if [ "${USE_NSYS}" = true ]; then
+    NSYS_OUT="\$LOG_DIR/nsys/trace_rank\$SLURM_PROCID"
+    TRAINING_CMD="nsys profile \
+        --output=$NSYS_OUT \
+        --trace=cuda,nvtx \
+        --force-overwrite=true \
+        --capture-range=cudaProfilerApi \
+        --capture-range-end=stop \
+        $TORCHRUN_CMD"
+else
+    TRAINING_CMD="$TORCHRUN_CMD"
+fi
 
 TOKENIZER
 
