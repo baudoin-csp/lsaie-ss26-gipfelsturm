@@ -163,6 +163,9 @@ cat >> "$SCRIPT" << 'SETUP'
 
 mkdir -p logs $LOG_DIR $TENSORBOARD_DIR $DATASET_CACHE_DIR
 
+# Install Liger-Kernel (fast, cached after first install)
+pip install liger-kernel --quiet
+
 cd $MEGATRON_LM_DIR
 flock $MEGATRON_LM_DIR/.git-lock bash -c "cd $MEGATRON_LM_DIR && git checkout -- . && git apply $WORKDIR/patches/*.patch"
 export PYTHONPATH=$MEGATRON_LM_DIR:$PYTHONPATH
@@ -252,6 +255,8 @@ DISTRIBUTED_ARGS=(
     --overlap-grad-reduce
     --overlap-param-gather
     --sequence-parallel
+    --recompute-granularity selective
+    --recompute-method uniform
 )
 
 LOGGING_ARGS=(
@@ -302,10 +307,12 @@ FLASH_ATTN_FLAG=""
 [ "${USE_FLASH_ATTN}" = true ] && FLASH_ATTN_FLAG="--use-flash-attn"
 
 COMPILE_FLAG=""
-[ "${USE_COMPILE}" = true ] && COMPILE_FLAG="--torch-compile"
 
 if [ "${USE_CCE}" = true ]; then
     TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_cce.py"
+elif [ "${USE_COMPILE}" = true ]; then
+    TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_compile.py"
+    [ "${USE_LIGER}" = true ] && export USE_LIGER=true
 elif [ "${USE_LIGER}" = true ]; then
     TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_liger.py"
 else
@@ -317,7 +324,6 @@ TORCHRUN_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${NETWORK_SIZE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
     $FLASH_ATTN_FLAG \
-    $COMPILE_FLAG \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
