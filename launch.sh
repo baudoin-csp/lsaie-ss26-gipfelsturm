@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Usage: ./launch.sh <mode> <model_size> [steps] [nodes]
+# Usage: ./launch.sh <mode> <model_size> [steps] [nodes] [--liger] [--flash-attn]
 #
 # Modes:     throughput  (50 steps, with W&B)
 #            train       (N steps, with W&B and Tensorboard)
@@ -9,9 +9,13 @@
 #
 # Steps:     required for train mode (e.g., 1000, 5000, 15000)
 # Nodes:     optional, default 4 (max 8)
+# --liger:   enable Liger-Kernel fused ops (RMSNorm, SwiGLU, CrossEntropy)
+# --flash-attn: enable FlashAttention
 #
 # Examples:  ./launch.sh throughput 760m
 #            ./launch.sh throughput 8b 50 1
+#            ./launch.sh throughput 8b 50 1 --liger
+#            ./launch.sh throughput 8b 50 1 --liger --flash-attn
 #            ./launch.sh train 760m 5000
 #            ./launch.sh train 1.5b 3000 8
 
@@ -21,6 +25,16 @@ source "$(dirname "$0")/config.sh"
 
 MODE=${1:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes]}
 MODEL_SIZE=${2:?Usage: ./launch.sh <mode> <model_size> [steps] [nodes]}
+
+# Parse optional flags from remaining args
+USE_LIGER=false
+USE_FLASH_ATTN=false
+for arg in "${@:3}"; do
+    case $arg in
+        --liger) USE_LIGER=true ;;
+        --flash-attn) USE_FLASH_ATTN=true ;;
+    esac
+done
 
 ################ Mode config ################
 case $MODE in
@@ -87,7 +101,12 @@ esac
 
 GBS=256
 SEQ_LEN=4096
-JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n"
+
+# Build suffix for job name from enabled optimizations
+OPT_SUFFIX=""
+[ "$USE_FLASH_ATTN" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-fa"
+[ "$USE_LIGER" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-liger"
+JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n${OPT_SUFFIX}"
 
 ################ W&B block ################
 if [ "$WANDB" = true ]; then
@@ -289,10 +308,21 @@ TORCHRUN_ARGS=(
     --tee 3
 )
 
-TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $MEGATRON_LM_DIR/pretrain_gpt.py \
+FLASH_ATTN_FLAG=""
+[ "${USE_FLASH_ATTN}" = true ] && FLASH_ATTN_FLAG="--use-flash-attn"
+
+if [ "${USE_LIGER}" = true ]; then
+    TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_liger.py"
+    export MEGATRON_LM_DIR
+else
+    TRAIN_SCRIPT="$MEGATRON_LM_DIR/pretrain_gpt.py"
+fi
+
+TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
+    $FLASH_ATTN_FLAG \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
