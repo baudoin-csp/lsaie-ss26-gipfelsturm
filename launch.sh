@@ -31,12 +31,14 @@ USE_LIGER=false
 USE_FLASH_ATTN=false
 USE_COMPILE=false
 USE_NSYS=false
+USE_CCE=false
 for arg in "${@:3}"; do
     case $arg in
         --liger) USE_LIGER=true ;;
         --flash-attn) USE_FLASH_ATTN=true ;;
         --compile) USE_COMPILE=true ;;
         --nsys) USE_NSYS=true ;;
+        --cce) USE_CCE=true ;;
     esac
 done
 
@@ -111,6 +113,7 @@ OPT_SUFFIX=""
 [ "$USE_FLASH_ATTN" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-fa"
 [ "$USE_LIGER" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-liger"
 [ "$USE_COMPILE" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-compile"
+[ "$USE_CCE" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-cce"
 [ "$USE_NSYS" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-nsys"
 JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n${OPT_SUFFIX}"
 
@@ -320,7 +323,10 @@ FLASH_ATTN_FLAG=""
 COMPILE_FLAG=""
 [ "${USE_COMPILE}" = true ] && COMPILE_FLAG="--torch-compile"
 
-if [ "${USE_LIGER}" = true ]; then
+if [ "${USE_CCE}" = true ]; then
+    TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_cce.py"
+    export MEGATRON_LM_DIR
+elif [ "${USE_LIGER}" = true ]; then
     TRAIN_SCRIPT="$WORKDIR/pretrain_gpt_liger.py"
     export MEGATRON_LM_DIR
 else
