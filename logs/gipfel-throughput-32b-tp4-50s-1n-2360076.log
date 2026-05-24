@@ -1,0 +1,119 @@
+START TIME: Sun May 24 04:42:52 CEST 2026
+/var/spool/slurmd/job2360076/slurm_script: line 37: pip: command not found
+[Sun May 24 04:42:53 CEST 2026] WANDB enabled.
+CMD: torchrun --nproc-per-node 4 --nnodes 1 --rdzv_endpoint nid006173:25678 --rdzv_backend c10d --max_restarts 0 --tee 3 /iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py     --transformer-impl transformer_engine --use-precision-aware-optimizer --main-grads-dtype bf16     --num-layers 32 --hidden-size 8192 --ffn-hidden-size 28672 --num-attention-heads 64 --group-query-attention --num-query-groups 8 --max-position-embeddings 4096 --position-embedding-type rope --normalization RMSNorm --swiglu --untie-embeddings-and-output-weights --seq-length 4096     --micro-batch-size 1 --global-batch-size 256 --train-iters 50 --log-interval 1 --eval-interval 50 --eval-iters 0 --cross-entropy-loss-fusion --disable-bias-linear --optimizer adam --dataloader-type single --no-check-for-nan-in-loss-and-grad --manual-gc --manual-gc-interval 50          --attention-dropout 0.0 --hidden-dropout 0.0 --weight-decay 0.1 --clip-grad 1.0 --adam-beta1 0.9 --adam-beta2 0.95     --lr 3e-4 --lr-decay-style constant --lr-warmup-iters 10     --seed 42 --init-method-std 0.02     --bf16     --tensor-model-parallel-size 4 --pipeline-model-parallel-size 1 --use-distributed-optimizer --overlap-grad-reduce --overlap-param-gather --sequence-parallel --recompute-granularity selective --recompute-method uniform     --log-throughput --log-progress     --tokenizer-type GPT2BPETokenizer --vocab-file /iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/data/gpt2-vocab.json --merge-file /iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/data/gpt2-merges.txt     --data-path /capstor/store/cscs/swissai/infra01/datasets/nvidia/Nemotron-ClimbMix/climbmix_small_megatron/climbmix_small --data-cache-path /iopsstor/scratch/cscs/course_00207/gipfelsturm/cache --split 99,1,0 --num-workers 1         --wandb-save-dir /iopsstor/scratch/cscs/course_00207/gipfelsturm/gipfelsturm/throughput-32b-tp4-1n         --wandb-project gipfelsturm         --wandb-exp-name throughput-32b-tp4-1n-2360076
+0: [default0]:/usr/local/lib/python3.12/dist-packages/torch/library.py:357: UserWarning: Warning only once for all operators,  other operators may also be overridden.
+0: [default0]:  Overriding a previously registered kernel for the same operator and the same dispatch key
+0: [default0]:  operator: flash_attn::_flash_attn_backward(Tensor dout, Tensor q, Tensor k, Tensor v, Tensor out, Tensor softmax_lse, Tensor(a6!)? dq, Tensor(a7!)? dk, Tensor(a8!)? dv, float dropout_p, float softmax_scale, bool causal, SymInt window_size_left, SymInt window_size_right, float softcap, Tensor? alibi_slopes, bool deterministic, Tensor? rng_state=None) -> Tensor
+0: [default0]:    registered at /usr/local/lib/python3.12/dist-packages/torch/_library/custom_ops.py:926
+0: [default0]:  dispatch key: ADInplaceOrView
+0: [default0]:  previous kernel: no debug info
+0: [default0]:       new kernel: registered at /usr/local/lib/python3.12/dist-packages/torch/_library/custom_ops.py:926 (Triggered internally at /opt/pytorch/pytorch/aten/src/ATen/core/dispatch/Op
+0: eratorEntry.cpp:208.)
+0: [default0]:  self.m.impl(
+0: [default1]:Traceback (most recent call last):
+0: [default1]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py", line 342, in <module>
+0: [default1]:    pretrain(
+0: [default1]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/training.py", line 768, in pretrain
+0: [default1]:    initialize_megatron(
+0: [default1]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/initialize.py", line 92, in initialize_megatron
+0: [default1]:    validate_args(args, args_defaults)
+0: [default1]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/arguments.py", line 900, in validate_args
+0: [default1]:    assert args.recompute_method is None, \
+0: [default1]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0: [default1]:AssertionError: recompute method is not yet supported for selective recomputing granularity
+0: [default3]:Traceback (most recent call last):
+0: [default3]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py", line 342, in <module>
+0: [default3]:    pretrain(
+0: [default3]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/training.py", line 768, in pretrain
+0: [default3]:    initialize_megatron(
+0: [default3]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/initialize.py", line 92, in initialize_megatron
+0: [default3]:    validate_args(args, args_defaults)
+0: [default3]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/arguments.py", line 900, in validate_args
+0: [default3]:    assert args.recompute_method is None, \
+0: [default3]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0: [default3]:AssertionError: recompute method is not yet supported for selective recomputing granularity
+0: [default2]:Traceback (most recent call last):
+0: [default2]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py", line 342, in <module>
+0: [default2]:    pretrain(
+0: [default2]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/training.py", line 768, in pretrain
+0: [default2]:    initialize_megatron(
+0: [default2]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/initialize.py", line 92, in initialize_megatron
+0: [default2]:    validate_args(args, args_defaults)
+0: [default2]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/arguments.py", line 900, in validate_args
+0: [default2]:    assert args.recompute_method is None, \
+0: [default2]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0: [default2]:AssertionError: recompute method is not yet supported for selective recomputing granularity
+0: [default0]:using world size: 4, data-parallel size: 1, context-parallel size: 1, hierarchical context-parallel sizes: None, tensor-model-parallel size: 4, pipeline-model-parallel size: 1
+0: [default0]:Number of virtual stages per pipeline stage: None
+0: [default0]:/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/utils.py:411: UserWarning: Overriding default arguments for tokenizer_type:GPT2BPETokenizer with tokenizer_type:GPT2BPETokenizer
+0: [default0]:using torch.bfloat16 for parameters ...
+0: [default0]:  warnings.warn(message)
+0: [default0]:Traceback (most recent call last):
+0: [default0]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py", line 342, in <module>
+0: [default0]:    pretrain(
+0: [default0]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/training.py", line 768, in pretrain
+0: [default0]:    initialize_megatron(
+0: [default0]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/initialize.py", line 92, in initialize_megatron
+0: [default0]:    validate_args(args, args_defaults)
+0: [default0]:  File "/iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/megatron/training/arguments.py", line 900, in validate_args
+0: [default0]:    assert args.recompute_method is None, \
+0: [default0]:           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0: [default0]:AssertionError: recompute method is not yet supported for selective recomputing granularity
+0: E0524 04:43:28.758000 214714 torch/distributed/elastic/multiprocessing/api.py:984] failed (exitcode: 1) local_rank: 0 (pid: 215202) of binary: /usr/bin/python
+0: Traceback (most recent call last):
+0:   File "/usr/local/bin/torchrun", line 7, in <module>
+0:     sys.exit(main())
+0:              ^^^^^^
+0:   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+0:     return f(*args, **kwargs)
+0:            ^^^^^^^^^^^^^^^^^^
+0:   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 991, in main
+0:     run(args)
+0:   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 982, in run
+0:     elastic_launch(
+0:   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+0:     return launch_agent(self._config, self._entrypoint, list(args))
+0:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+0:   File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+0:     raise ChildFailedError(
+0: torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+0: ============================================================
+0: /iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/Megatron-LM/pretrain_gpt.py FAILED
+0: ------------------------------------------------------------
+0: Failures:
+0: [1]:
+0:   time      : 2026-05-24_04:43:28
+0:   host      : nid006173
+0:   rank      : 1 (local_rank: 1)
+0:   exitcode  : 1 (pid: 215203)
+0:   error_file: <N/A>
+0:   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+0: [2]:
+0:   time      : 2026-05-24_04:43:28
+0:   host      : nid006173
+0:   rank      : 2 (local_rank: 2)
+0:   exitcode  : 1 (pid: 215204)
+0:   error_file: <N/A>
+0:   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+0: [3]:
+0:   time      : 2026-05-24_04:43:28
+0:   host      : nid006173
+0:   rank      : 3 (local_rank: 3)
+0:   exitcode  : 1 (pid: 215205)
+0:   error_file: <N/A>
+0:   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+0: ----------------------
+0: --------------------------------------
+0: Root Cause (first observed failure):
+0: [0]:
+0:   time      : 2026-05-24_04:43:28
+0:   host      : nid006173
+0:   rank      : 0 (local_rank: 0)
+0:   exitcode  : 1 (pid: 215202)
+0:   error_file: <N/A>
+0:   traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+0: ============================================================
+srun: error: nid006173: task 0: Exited with exit code 1
+srun: Terminating StepId=2360076.0
+END TIME: Sun May 24 04:43:30 CEST 2026
