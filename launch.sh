@@ -22,7 +22,11 @@
 #   --mbs N             Override micro-batch size (model-specific default)
 #   --profile           Enable NSYS profiling (steps 10-20)
 #   --zero {2,3}        Enable ZeRO-2 or ZeRO-3 via Megatron FSDP
-#   --recompute         Enable gradient checkpointing (selective recompute)
+#   --recompute         Enable selective activation recompute (attention softmax only)
+#   --full-recompute    Enable full activation recompute per layer (~30% throughput cost)
+#   --opt-cpu-offload   Offload optimizer states (m/v/master) to CPU — fixes OOM at 32B
+#   --fg-offload        Fine-grained TE activation offload to CPU (GH200: ~14x faster via NVLink-C2C)
+#   --layer-offload N   Offload activations of N transformer layers to CPU
 #
 # Examples:  ./launch.sh throughput 760m
 #            ./launch.sh throughput 1.5b 50 1 --tp 4 --sp --fp8
@@ -48,6 +52,10 @@ ENABLE_FA=false
 ENABLE_NO_JIT=false
 ENABLE_PROFILE=false
 ENABLE_RECOMPUTE=false
+ENABLE_FULL_RECOMPUTE=false
+ENABLE_OPT_CPU_OFFLOAD=false
+ENABLE_FG_OFFLOAD=false
+LAYER_OFFLOAD=""
 GBS=256
 MBS_OVERRIDE=""
 ZERO_STAGE=""
@@ -63,7 +71,11 @@ while [[ $# -gt 0 ]]; do
         --fa)           ENABLE_FA=true; shift;;
         --no-jit)       ENABLE_NO_JIT=true; shift;;
         --profile)      ENABLE_PROFILE=true; shift;;
-        --recompute)    ENABLE_RECOMPUTE=true; shift;;
+        --recompute)         ENABLE_RECOMPUTE=true; shift;;
+        --full-recompute)    ENABLE_FULL_RECOMPUTE=true; shift;;
+        --opt-cpu-offload)   ENABLE_OPT_CPU_OFFLOAD=true; shift;;
+        --fg-offload)        ENABLE_FG_OFFLOAD=true; shift;;
+        --layer-offload)     LAYER_OFFLOAD="${2:?--layer-offload requires N}"; shift 2;;
         --gbs)          GBS="${2:?--gbs requires N}"; shift 2;;
         --mbs)          MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
         --zero)
@@ -156,7 +168,11 @@ $ENABLE_FP8        && EXP_TAGS="${EXP_TAGS}-fp8"
 $ENABLE_FP8_OPT    && EXP_TAGS="${EXP_TAGS}-fp8opt"
 $ENABLE_FA         && EXP_TAGS="${EXP_TAGS}-fa"
 $ENABLE_NO_JIT     && EXP_TAGS="${EXP_TAGS}-nojit"
-$ENABLE_RECOMPUTE  && EXP_TAGS="${EXP_TAGS}-recompute"
+$ENABLE_RECOMPUTE        && EXP_TAGS="${EXP_TAGS}-recompute"
+$ENABLE_FULL_RECOMPUTE   && EXP_TAGS="${EXP_TAGS}-fullrecompute"
+$ENABLE_OPT_CPU_OFFLOAD  && EXP_TAGS="${EXP_TAGS}-optcpuoffload"
+$ENABLE_FG_OFFLOAD       && EXP_TAGS="${EXP_TAGS}-fgoffload"
+[[ -n "$LAYER_OFFLOAD" ]] && EXP_TAGS="${EXP_TAGS}-layeroffload${LAYER_OFFLOAD}"
 $ENABLE_PROFILE    && EXP_TAGS="${EXP_TAGS}-profile"
 [[ -n "$ZERO_STAGE" ]] && EXP_TAGS="${EXP_TAGS}-zero${ZERO_STAGE}"
 JOB_NAME="gipfel-${EXP_TAGS}"
@@ -181,9 +197,13 @@ fi
 
 ################ Build optional args for sbatch ################
 EXTRA_ARGS=""
-$ENABLE_FA         && EXTRA_ARGS="$EXTRA_ARGS --use-flash-attn"
-$ENABLE_NO_JIT     && EXTRA_ARGS="$EXTRA_ARGS --disable-jit-fuser"
-$ENABLE_RECOMPUTE  && EXTRA_ARGS="$EXTRA_ARGS --recompute-activations"
+$ENABLE_FA              && EXTRA_ARGS="$EXTRA_ARGS --use-flash-attn"
+$ENABLE_NO_JIT          && EXTRA_ARGS="$EXTRA_ARGS --disable-jit-fuser"
+$ENABLE_RECOMPUTE       && EXTRA_ARGS="$EXTRA_ARGS --recompute-activations"
+$ENABLE_FULL_RECOMPUTE  && EXTRA_ARGS="$EXTRA_ARGS --recompute-granularity full --recompute-method uniform --recompute-num-layers 1"
+$ENABLE_OPT_CPU_OFFLOAD && EXTRA_ARGS="$EXTRA_ARGS --optimizer-cpu-offload"
+$ENABLE_FG_OFFLOAD      && EXTRA_ARGS="$EXTRA_ARGS --fine-grained-activation-offloading"
+[[ -n "$LAYER_OFFLOAD" ]] && EXTRA_ARGS="$EXTRA_ARGS --cpu-offloading-num-layers ${LAYER_OFFLOAD}"
 
 if $ENABLE_FP8; then
     EXTRA_ARGS="$EXTRA_ARGS --fp8-format hybrid --fp8-amax-history-len 1024 --fp8-amax-compute-algo max"
@@ -208,6 +228,10 @@ $ENABLE_SP         && DISTRIBUTED_ARGS_CONTENT="${DISTRIBUTED_ARGS_CONTENT}
     --sequence-parallel"
 $ENABLE_TP_OVERLAP && DISTRIBUTED_ARGS_CONTENT="${DISTRIBUTED_ARGS_CONTENT}
     --tp-comm-overlap"
+
+################ Fine-grained offload env var (TE >= 2.10 requires NVTE_CPU_OFFLOAD_V1=1) ################
+FG_OFFLOAD_ENV=""
+$ENABLE_FG_OFFLOAD && FG_OFFLOAD_ENV="export NVTE_CPU_OFFLOAD_V1=1"
 
 ################ NSYS profiling ################
 NSYS_CMD=""
@@ -270,6 +294,10 @@ EXP_NAME=${EXP_TAGS}
 LOG_DIR=/iopsstor/scratch/cscs/\$USER/gipfelsturm/\$PROJECT_NAME/\$EXP_NAME
 TENSORBOARD_DIR=\$LOG_DIR/tensorboard
 CONFIGS
+
+cat >> "$SCRIPT" << SETUP_ENV
+${FG_OFFLOAD_ENV}
+SETUP_ENV
 
 cat >> "$SCRIPT" << 'SETUP'
 
@@ -424,11 +452,6 @@ cat >> "$SCRIPT" << EXTRA_ARGS_SECTION
 TRAINING_CMD="\$TRAINING_CMD ${EXTRA_ARGS}"
 EXTRA_ARGS_SECTION
 
-cat >> "$SCRIPT" << 'WANDB_PLACEHOLDER'
-WANDB_PLACEHOLDER
-
-# Replace placeholder with actual W&B block
-sed -i '/^WANDB_PLACEHOLDER$/d' "$SCRIPT"
 cat >> "$SCRIPT" << WANDB_INSERT
 ${WANDB_BLOCK}
 WANDB_INSERT
