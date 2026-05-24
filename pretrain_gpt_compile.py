@@ -38,7 +38,9 @@ def _setup_with_compile(*args, **kwargs):
     compiled = []
     for m in model_list:
         try:
-            compiled.append(torch.compile(m, mode="reduce-overhead"))
+            # dynamic=True avoids recompilation on shape changes
+            # fullgraph=False allows partial compilation compatible with DDP hooks
+            compiled.append(torch.compile(m, fullgraph=False, dynamic=True))
             print("[torch.compile] Model compiled successfully", flush=True)
         except Exception as e:
             print(f"[torch.compile] Failed: {e} — using uncompiled model", flush=True)

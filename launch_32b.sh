@@ -163,9 +163,6 @@ cat >> "$SCRIPT" << 'SETUP'
 
 mkdir -p logs $LOG_DIR $TENSORBOARD_DIR $DATASET_CACHE_DIR
 
-# Install Liger-Kernel (fast, cached after first install)
-pip install liger-kernel --quiet
-
 cd $MEGATRON_LM_DIR
 flock $MEGATRON_LM_DIR/.git-lock bash -c "cd $MEGATRON_LM_DIR && git checkout -- . && git apply $WORKDIR/patches/*.patch"
 export PYTHONPATH=$MEGATRON_LM_DIR:$PYTHONPATH
@@ -256,7 +253,6 @@ DISTRIBUTED_ARGS=(
     --overlap-param-gather
     --sequence-parallel
     --recompute-granularity selective
-    --recompute-method uniform
 )
 
 LOGGING_ARGS=(
@@ -357,7 +353,7 @@ WANDB_INSERT
 cat >> "$SCRIPT" << 'FOOTER'
 
 echo "CMD: $TRAINING_CMD"
-srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "numactl --membind=0-3 $TRAINING_CMD"
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "pip install liger-kernel --quiet 2>&1 | head -3; numactl --membind=0-3 $TRAINING_CMD"
 
 echo "END TIME: $(date)"
 FOOTER
