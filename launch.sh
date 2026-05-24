@@ -20,6 +20,7 @@
 #   --no-jit            Disable JIT fuser (torch.compile for kernel fusions)
 #   --gbs N             Override global batch size (default: 256)
 #   --mbs N             Override micro-batch size (model-specific default)
+#   --seq-len N         Override sequence length (default: 4096)
 #   --profile           Enable NSYS profiling (steps 10-20)
 #   --zero {2,3}        Enable ZeRO-2 or ZeRO-3 via Megatron FSDP
 #   --recompute         Enable selective activation recompute (attention softmax only)
@@ -58,6 +59,7 @@ ENABLE_FG_OFFLOAD=false
 LAYER_OFFLOAD=""
 GBS=256
 MBS_OVERRIDE=""
+SEQ_LEN_OVERRIDE=""
 ZERO_STAGE=""
 
 _POSITIONAL=()
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --layer-offload)     LAYER_OFFLOAD="${2:?--layer-offload requires N}"; shift 2;;
         --gbs)          GBS="${2:?--gbs requires N}"; shift 2;;
         --mbs)          MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
+        --seq-len)      SEQ_LEN_OVERRIDE="${2:?--seq-len requires N}"; shift 2;;
         --zero)
             ZERO_STAGE="${2:?--zero requires 2 or 3}"
             if [[ "$ZERO_STAGE" != "2" && "$ZERO_STAGE" != "3" ]]; then
@@ -159,9 +162,10 @@ esac
 [[ -n "$MBS_OVERRIDE" ]] && MBS="$MBS_OVERRIDE"
 
 SEQ_LEN=4096
+[[ -n "$SEQ_LEN_OVERRIDE" ]] && SEQ_LEN="$SEQ_LEN_OVERRIDE"
 
 ################ Build experiment tag ################
-EXP_TAGS="${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n-tp${TP}"
+EXP_TAGS="${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n-tp${TP}-seq${SEQ_LEN}"
 $ENABLE_SP         && EXP_TAGS="${EXP_TAGS}-sp"
 $ENABLE_TP_OVERLAP && EXP_TAGS="${EXP_TAGS}-tpoverlap"
 $ENABLE_FP8        && EXP_TAGS="${EXP_TAGS}-fp8"
