@@ -95,13 +95,15 @@ done
 ################ Mode config ################
 case $MODE in
     throughput)
-        TRAINING_STEPS=${_POSITIONAL[0]:-50}
+        TRAINING_STEPS=${_POSITIONAL[0]:-25}
         NODES=${_POSITIONAL[1]:-1}
-        TIME=00:30:00
+        TIME=00:17:00
         EVAL_INTERVAL=$TRAINING_STEPS
         EVAL_ITERS=0
         LR_WARMUP_ITERS=10
-        LOGGING_EXTRA=""
+        LOGGING_EXTRA="
+    --tensorboard-dir \$TENSORBOARD_DIR
+    --log-memory-to-tensorboard"
         WANDB=true
         ;;
     train)
