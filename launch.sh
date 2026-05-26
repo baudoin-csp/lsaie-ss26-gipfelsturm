@@ -199,8 +199,8 @@ export PYTHONPATH=$MEGATRON_LM_DIR:$PYTHONPATH
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
-export TRITON_CACHE_DIR=/iopsstor/scratch/cscs/$USER/gipfelsturm/.triton_cache
-export TORCHINDUCTOR_CACHE_DIR=/iopsstor/scratch/cscs/$USER/gipfelsturm/.inductor_cache
+export TRITON_CACHE_DIR=/dev/shm/$USER/.triton_cache
+export TORCHINDUCTOR_CACHE_DIR=/dev/shm/$USER/.inductor_cache
 export OMP_NUM_THREADS=$((SLURM_CPUS_PER_TASK/SLURM_GPUS_PER_NODE))
 MASTER_ADDR=$(hostname)
 MASTER_PORT=25678
@@ -386,7 +386,7 @@ WANDB_INSERT
 cat >> "$SCRIPT" << 'FOOTER'
 
 echo "CMD: $TRAINING_CMD"
-srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "export PYTHONPATH=$LIGER_VENV/lib/python3.12/site-packages:$PYTHONPATH; echo \"[DEBUG] PYTHONPATH=$PYTHONPATH\"; python -c 'import liger_kernel; print(\"liger ok\")' 2>&1 || echo \"liger import failed\"; numactl --membind=0-3 $TRAINING_CMD"
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "export PYTHONPATH=$LIGER_VENV/lib/python3.12/site-packages:$PYTHONPATH; numactl --membind=0-3 $TRAINING_CMD"
 
 echo "END TIME: $(date)"
 FOOTER

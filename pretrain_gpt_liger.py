@@ -12,10 +12,11 @@ import sys
 # RMSNorm and SwiGLU gains depend on how much TE defers to Megatron's classes.
 try:
     # apply_liger_kernel_to_megatron is not yet in any released version (open PR #1207).
-    # Instead, manually patch Megatron's RMSNorm with Liger's fused Triton implementation.
+    # Manually patch Megatron's RMSNorm with Liger's fused Triton implementation.
     from liger_kernel.transformers.rms_norm import LigerRMSNorm
-    import megatron.core.transformer.norm as megatron_norm
-    megatron_norm.RMSNorm = LigerRMSNorm
+    import megatron.core.fusions.fused_layer_norm as megatron_fused_norm
+    megatron_fused_norm.FusedRMSNorm = LigerRMSNorm
+    import megatron.core.transformer.transformer_config as megatron_config
     print("[Liger-Kernel] Applied: RMSNorm patched with LigerRMSNorm", flush=True)
 except Exception as e:
     print(f"[Liger-Kernel] RMSNorm patch failed: {type(e).__name__}: {e}", flush=True)
