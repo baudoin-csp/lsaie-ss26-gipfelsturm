@@ -301,9 +301,8 @@ USE_COMPILE=${USE_COMPILE}
 USE_CCE=${USE_CCE}
 USE_NSYS=${USE_NSYS}
 export MEGATRON_LM_DIR=${WORKDIR}/Megatron-LM
-LIGER_PKG_DIR=${WORKDIR}/pip_packages
-mkdir -p \$LIGER_PKG_DIR
-export PYTHONPATH=\$LIGER_PKG_DIR:\$PYTHONPATH
+LIGER_VENV=${WORKDIR}/liger_venv
+export PYTHONPATH=\$LIGER_VENV/lib/python3.12/site-packages:\$PYTHONPATH
 RESOLVED_FLAGS
 
 cat >> "$SCRIPT" << 'TOKENIZER'
@@ -387,7 +386,7 @@ WANDB_INSERT
 cat >> "$SCRIPT" << 'FOOTER'
 
 echo "CMD: $TRAINING_CMD"
-srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "pip install liger-kernel --target=$LIGER_PKG_DIR --quiet > $LOG_DIR/pip_liger.log 2>&1; numactl --membind=0-3 $TRAINING_CMD"
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "numactl --membind=0-3 $TRAINING_CMD"
 
 echo "END TIME: $(date)"
 FOOTER
