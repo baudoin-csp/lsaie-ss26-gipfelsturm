@@ -32,6 +32,7 @@ USE_FLASH_ATTN=false
 USE_COMPILE=false
 USE_NSYS=false
 USE_CCE=false
+USE_LOCAL_IMPL=false
 for arg in "${@:3}"; do
     case $arg in
         --liger) USE_LIGER=true ;;
@@ -39,6 +40,7 @@ for arg in "${@:3}"; do
         --compile) USE_COMPILE=true ;;
         --nsys) USE_NSYS=true ;;
         --cce) USE_CCE=true ;;
+        --local) USE_LOCAL_IMPL=true ;;
     esac
 done
 
@@ -115,6 +117,7 @@ OPT_SUFFIX=""
 [ "$USE_COMPILE" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-compile"
 [ "$USE_CCE" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-cce"
 [ "$USE_NSYS" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-nsys"
+[ "$USE_LOCAL_IMPL" = true ] && OPT_SUFFIX="${OPT_SUFFIX}-local"
 JOB_NAME="gipfel-${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n${OPT_SUFFIX}"
 
 ################ W&B block ################
@@ -300,6 +303,7 @@ USE_FLASH_ATTN=${USE_FLASH_ATTN}
 USE_COMPILE=${USE_COMPILE}
 USE_CCE=${USE_CCE}
 USE_NSYS=${USE_NSYS}
+USE_LOCAL_IMPL=${USE_LOCAL_IMPL}
 export MEGATRON_LM_DIR=${WORKDIR}/Megatron-LM
 LIGER_VENV=${WORKDIR}/liger_venv
 export PYTHONPATH=\$LIGER_VENV/lib/python3.12/site-packages:\$PYTHONPATH
@@ -328,6 +332,10 @@ TORCHRUN_ARGS=(
     --max_restarts 0
     --tee 3
 )
+
+if [ "${USE_LOCAL_IMPL}" = true ]; then
+    TRANSFORMER_ENGINE_ARGS=(--transformer-impl local)
+fi
 
 FLASH_ATTN_FLAG=""
 [ "${USE_FLASH_ATTN}" = true ] && FLASH_ATTN_FLAG="--use-flash-attn"
