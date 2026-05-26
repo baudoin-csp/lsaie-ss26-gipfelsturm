@@ -19,9 +19,10 @@ try:
         fused_linear_cross_entropy=False,
     )
     print("[Liger-Kernel] Applied: RMSNorm=True, SwiGLU=True, CrossEntropy=True", flush=True)
-except ImportError:
-    print("[Liger-Kernel] Not installed — run: pip install liger-kernel", flush=True)
-    print("[Liger-Kernel] Continuing without Liger optimizations.", flush=True)
+except ImportError as e:
+    print(f"[Liger-Kernel] ImportError: {e}", flush=True)
+except Exception as e:
+    print(f"[Liger-Kernel] Error: {type(e).__name__}: {e}", flush=True)
 
 # Run pretrain_gpt.py as __main__ with the same sys.argv
 import runpy
