@@ -11,18 +11,14 @@ import sys
 # handles attention and MLP internals. Liger's cross-entropy always applies;
 # RMSNorm and SwiGLU gains depend on how much TE defers to Megatron's classes.
 try:
-    from liger_kernel.transformers import apply_liger_kernel_to_megatron
-    apply_liger_kernel_to_megatron(
-        rms_norm=True,
-        swiglu=True,
-        cross_entropy=True,
-        fused_linear_cross_entropy=False,
-    )
-    print("[Liger-Kernel] Applied: RMSNorm=True, SwiGLU=True, CrossEntropy=True", flush=True)
-except ImportError as e:
-    print(f"[Liger-Kernel] ImportError: {e}", flush=True)
+    # apply_liger_kernel_to_megatron is not yet in any released version (open PR #1207).
+    # Instead, manually patch Megatron's RMSNorm with Liger's fused Triton implementation.
+    from liger_kernel.transformers.rms_norm import LigerRMSNorm
+    import megatron.core.transformer.norm as megatron_norm
+    megatron_norm.RMSNorm = LigerRMSNorm
+    print("[Liger-Kernel] Applied: RMSNorm patched with LigerRMSNorm", flush=True)
 except Exception as e:
-    print(f"[Liger-Kernel] Error: {type(e).__name__}: {e}", flush=True)
+    print(f"[Liger-Kernel] RMSNorm patch failed: {type(e).__name__}: {e}", flush=True)
 
 # Run pretrain_gpt.py as __main__ with the same sys.argv
 import runpy
