@@ -47,7 +47,7 @@ case $MODE in
     throughput)
         TRAINING_STEPS=${3:-50}
         NODES=${4:-4}
-        TIME=00:15:00
+        TIME=00:30:00
         EVAL_INTERVAL=$TRAINING_STEPS
         EVAL_ITERS=0
         LR_WARMUP_ITERS=10
@@ -386,7 +386,7 @@ WANDB_INSERT
 cat >> "$SCRIPT" << 'FOOTER'
 
 echo "CMD: $TRAINING_CMD"
-srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "numactl --membind=0-3 $TRAINING_CMD"
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=alps3 --cpus-per-task $SLURM_CPUS_PER_TASK --wait 60 bash -c "export PYTHONPATH=$LIGER_VENV/lib/python3.12/site-packages:$PYTHONPATH; numactl --membind=0-3 $TRAINING_CMD"
 
 echo "END TIME: $(date)"
 FOOTER
