@@ -335,6 +335,7 @@ TORCHRUN_ARGS=(
 
 if [ "${USE_LOCAL_IMPL}" = true ]; then
     TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm)
+    MBS=1
 fi
 
 FLASH_ATTN_FLAG=""
@@ -369,9 +370,8 @@ TORCHRUN_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
 
 if [ "${USE_NSYS}" = true ]; then
     mkdir -p \$LOG_DIR/nsys
-    NSYS_OUT="\$LOG_DIR/nsys/trace_rank\$SLURM_PROCID"
     TRAINING_CMD="nsys profile \
-        --output=\$NSYS_OUT \
+        --output=\$LOG_DIR/nsys/trace \
         --trace=cuda,nvtx \
         --force-overwrite=true \
         --duration=60 \
