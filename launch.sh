@@ -334,7 +334,7 @@ TORCHRUN_ARGS=(
 )
 
 if [ "${USE_LOCAL_IMPL}" = true ]; then
-    TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm --recompute-granularity full --recompute-method uniform)
+    TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm --recompute-granularity full --recompute-method uniform --recompute-num-layers 32)
     MBS=1
 fi
 
