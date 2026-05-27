@@ -95,7 +95,7 @@ done
 ################ Mode config ################
 case $MODE in
     throughput)
-        TRAINING_STEPS=${_POSITIONAL[0]:-25}
+        TRAINING_STEPS=${_POSITIONAL[0]:-15}
         NODES=${_POSITIONAL[1]:-1}
         TIME=00:17:00
         EVAL_INTERVAL=$TRAINING_STEPS
@@ -402,6 +402,25 @@ ${DISTRIBUTED_ARGS_CONTENT}
 )
 DISTRIBUTED_BLOCK
 
+if $ENABLE_FG_OFFLOAD; then
+cat >> "$SCRIPT" << 'FG_OFFLOAD_BLOCK'
+
+OFFLOAD_MODULES_ARGS=(
+    --offload-modules
+    core_attn
+    attn_proj
+    qkv_linear
+    attn_norm
+    mlp_norm
+)
+FG_OFFLOAD_BLOCK
+else
+cat >> "$SCRIPT" << 'FG_OFFLOAD_BLOCK'
+
+OFFLOAD_MODULES_ARGS=()
+FG_OFFLOAD_BLOCK
+fi
+
 cat >> "$SCRIPT" << 'LOGGING_HEAD'
 
 LOGGING_ARGS=(
@@ -449,7 +468,8 @@ TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $MEGATRON_LM_DIR/pretrain_gpt.py \
     ${DISTRIBUTED_ARGS[@]} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
-    ${DATA_ARGS[@]}"
+    ${DATA_ARGS[@]} \
+    ${OFFLOAD_MODULES_ARGS[@]}"
 
 TOKENIZER
 
