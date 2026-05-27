@@ -334,7 +334,7 @@ TORCHRUN_ARGS=(
 )
 
 if [ "${USE_LOCAL_IMPL}" = true ]; then
-    TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm)
+    TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm --recompute-granularity full --recompute-method uniform)
     MBS=1
 fi
 
@@ -369,9 +369,10 @@ TORCHRUN_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${DATA_ARGS[@]}"
 
 if [ "${USE_NSYS}" = true ]; then
-    mkdir -p \$LOG_DIR/nsys
+    NSYS_DIR=/iopsstor/scratch/cscs/$USER/gipfelsturm/nsys_traces
+    mkdir -p $NSYS_DIR
     TRAINING_CMD="nsys profile \
-        --output=\$LOG_DIR/nsys/trace \
+        --output=$NSYS_DIR/trace \
         --trace=cuda,nvtx \
         --force-overwrite=true \
         --duration=60 \
