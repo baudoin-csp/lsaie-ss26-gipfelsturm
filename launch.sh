@@ -335,7 +335,14 @@ TORCHRUN_ARGS=(
 
 if [ "${USE_LOCAL_IMPL}" = true ]; then
     TRANSFORMER_ENGINE_ARGS=(--transformer-impl local --no-persist-layer-norm --recompute-granularity full --recompute-method uniform --recompute-num-layers 32)
-    MBS=1
+    MBS=2
+    DISTRIBUTED_ARGS=(
+        --tensor-model-parallel-size 2
+        --pipeline-model-parallel-size 1
+        --use-distributed-optimizer
+        --overlap-grad-reduce
+        --overlap-param-gather
+    )
 fi
 
 FLASH_ATTN_FLAG=""
