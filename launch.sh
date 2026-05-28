@@ -28,6 +28,7 @@
 #   --opt-cpu-offload   Offload optimizer states (m/v/master) to CPU — fixes OOM at 32B
 #   --fg-offload        Fine-grained TE activation offload to CPU (GH200: ~14x faster via NVLink-C2C)
 #   --layer-offload N   Offload activations of N transformer layers to CPU
+#   --cuda-graph        Enable CUDA graphs via TransformerEngine (5-15% throughput gain)
 #
 # Examples:  ./launch.sh throughput 760m
 #            ./launch.sh throughput 1.5b 50 1 --tp 4 --sp --fp8
@@ -56,6 +57,7 @@ ENABLE_RECOMPUTE=false
 ENABLE_FULL_RECOMPUTE=false
 ENABLE_OPT_CPU_OFFLOAD=false
 ENABLE_FG_OFFLOAD=false
+ENABLE_CUDA_GRAPH=false
 LAYER_OFFLOAD=""
 GBS=256
 MBS_OVERRIDE=""
@@ -77,6 +79,7 @@ while [[ $# -gt 0 ]]; do
         --full-recompute)    ENABLE_FULL_RECOMPUTE=true; shift;;
         --opt-cpu-offload)   ENABLE_OPT_CPU_OFFLOAD=true; shift;;
         --fg-offload)        ENABLE_FG_OFFLOAD=true; shift;;
+        --cuda-graph)        ENABLE_CUDA_GRAPH=true; shift;;
         --layer-offload)     LAYER_OFFLOAD="${2:?--layer-offload requires N}"; shift 2;;
         --gbs)          GBS="${2:?--gbs requires N}"; shift 2;;
         --mbs)          MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
@@ -177,6 +180,7 @@ $ENABLE_NO_JIT     && EXP_TAGS="${EXP_TAGS}-nojit"
 $ENABLE_RECOMPUTE        && EXP_TAGS="${EXP_TAGS}-recompute"
 $ENABLE_FULL_RECOMPUTE   && EXP_TAGS="${EXP_TAGS}-fullrecompute"
 $ENABLE_OPT_CPU_OFFLOAD  && EXP_TAGS="${EXP_TAGS}-optcpuoffload"
+$ENABLE_CUDA_GRAPH       && EXP_TAGS="${EXP_TAGS}-cudagraph"
 $ENABLE_FG_OFFLOAD       && EXP_TAGS="${EXP_TAGS}-fgoffload"
 [[ -n "$LAYER_OFFLOAD" ]] && EXP_TAGS="${EXP_TAGS}-layeroffload${LAYER_OFFLOAD}"
 $ENABLE_PROFILE    && EXP_TAGS="${EXP_TAGS}-profile"
@@ -208,6 +212,7 @@ $ENABLE_NO_JIT          && EXTRA_ARGS="$EXTRA_ARGS --disable-jit-fuser"
 $ENABLE_RECOMPUTE       && EXTRA_ARGS="$EXTRA_ARGS --recompute-activations"
 $ENABLE_FULL_RECOMPUTE  && EXTRA_ARGS="$EXTRA_ARGS --recompute-granularity full --recompute-method uniform --recompute-num-layers 1"
 $ENABLE_OPT_CPU_OFFLOAD && EXTRA_ARGS="$EXTRA_ARGS --optimizer-cpu-offload"
+$ENABLE_CUDA_GRAPH      && EXTRA_ARGS="$EXTRA_ARGS --cuda-graph-impl transformer_engine"
 $ENABLE_FG_OFFLOAD      && EXTRA_ARGS="$EXTRA_ARGS --fine-grained-activation-offloading"
 [[ -n "$LAYER_OFFLOAD" ]] && EXTRA_ARGS="$EXTRA_ARGS --cpu-offloading-num-layers ${LAYER_OFFLOAD}"
 
@@ -315,6 +320,9 @@ cd $MEGATRON_LM_DIR
 flock $MEGATRON_LM_DIR/.git-lock bash -c "cd $MEGATRON_LM_DIR && git checkout -- . && git apply $WORKDIR/patches/*.patch"
 export PYTHONPATH=$MEGATRON_LM_DIR:$PYTHONPATH
 export CUDA_DEVICE_MAX_CONNECTIONS=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export NVTE_FWD_LAYERNORM_SM_MARGIN=16
+export NVTE_BWD_LAYERNORM_SM_MARGIN=16
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TRITON_CACHE_DIR=/iopsstor/scratch/cscs/$USER/gipfelsturm/.triton_cache
