@@ -2,10 +2,10 @@
 #
 # Usage: ./launch.sh <mode> <model_size> [steps] [nodes] [options]
 #
-# Modes:     throughput  (50 steps, with W&B)
+# Modes:     throughput  (15 steps, with W&B)
 #            train       (N steps, with W&B and Tensorboard)
 #
-# Sizes:     125m, 350m, 760m, 1.5b, 3b, 8b
+# Sizes:     125m, 350m, 760m, 1.5b, 3b, 8b, 32b
 #
 # Steps:     required for train mode; positional after model_size
 # Nodes:     optional positional after steps (default 1)
@@ -16,25 +16,30 @@
 #   --tp-overlap        Enable TP communication/GEMM overlap (requires --sp)
 #   --fp8               Enable FP8 training via TransformerEngine
 #   --fp8-opt           Enable FP8 optimizer states (stacks on --fp8)
-#   --fa                Enable FlashAttention
-#   --no-jit            Disable JIT fuser (torch.compile for kernel fusions)
+#   --fa / --flash-attn Enable FlashAttention
+#   --liger             Enable Liger-Kernel fused ops (RMSNorm, SwiGLU, CrossEntropy)
+#   --compile           Enable torch.compile
+#   --cce               Enable Cut Cross-Entropy (Liger fused_linear_cross_entropy)
+#   --local             Use local transformer implementation (no TransformerEngine, TP=4)
+#   --no-jit            Disable JIT fuser
 #   --gbs N             Override global batch size (default: 256)
 #   --mbs N             Override micro-batch size (model-specific default)
 #   --seq-len N         Override sequence length (default: 4096)
-#   --profile           Enable NSYS profiling (steps 10-20)
+#   --profile / --nsys  Enable NSYS profiling (steps 10-20)
 #   --zero {2,3}        Enable ZeRO-2 or ZeRO-3 via Megatron FSDP
-#   --recompute         Enable selective activation recompute (attention softmax only)
+#   --recompute         Enable selective activation recompute
 #   --full-recompute    Enable full activation recompute per layer (~30% throughput cost)
-#   --opt-cpu-offload   Offload optimizer states (m/v/master) to CPU — fixes OOM at 32B
-#   --fg-offload        Fine-grained TE activation offload to CPU (GH200: ~14x faster via NVLink-C2C)
+#   --opt-cpu-offload   Offload optimizer states to CPU
+#   --fg-offload        Fine-grained TE activation offload to CPU (GH200: ~14x via NVLink-C2C)
 #   --layer-offload N   Offload activations of N transformer layers to CPU
 #   --cuda-graph        Enable CUDA graphs via TransformerEngine (5-15% throughput gain)
 #
 # Examples:  ./launch.sh throughput 760m
-#            ./launch.sh throughput 1.5b 50 1 --tp 4 --sp --fp8
-#            ./launch.sh throughput 3b 50 1 --fp8 --fp8-opt --mbs 8
+#            ./launch.sh throughput 8b --tp 1 --fp8 --fp8-opt
+#            ./launch.sh throughput 8b --liger --flash-attn
+#            ./launch.sh throughput 8b --compile
 #            ./launch.sh train 760m 5000 --tp 2
-#            ./launch.sh throughput 1.5b --profile
+#            ./launch.sh throughput 8b --profile
 
 set -euo pipefail
 
@@ -51,6 +56,10 @@ ENABLE_TP_OVERLAP=false
 ENABLE_FP8=false
 ENABLE_FP8_OPT=false
 ENABLE_FA=false
+ENABLE_LIGER=false
+ENABLE_COMPILE=false
+ENABLE_CCE=false
+ENABLE_LOCAL=false
 ENABLE_NO_JIT=false
 ENABLE_PROFILE=false
 ENABLE_RECOMPUTE=false
@@ -67,23 +76,27 @@ ZERO_STAGE=""
 _POSITIONAL=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --tp)           TP="${2:?--tp requires N}"; shift 2;;
-        --sp)           ENABLE_SP=true; shift;;
-        --tp-overlap)   ENABLE_TP_OVERLAP=true; shift;;
-        --fp8)          ENABLE_FP8=true; shift;;
-        --fp8-opt)      ENABLE_FP8_OPT=true; shift;;
-        --fa)           ENABLE_FA=true; shift;;
-        --no-jit)       ENABLE_NO_JIT=true; shift;;
-        --profile)      ENABLE_PROFILE=true; shift;;
-        --recompute)         ENABLE_RECOMPUTE=true; shift;;
-        --full-recompute)    ENABLE_FULL_RECOMPUTE=true; shift;;
-        --opt-cpu-offload)   ENABLE_OPT_CPU_OFFLOAD=true; shift;;
-        --fg-offload)        ENABLE_FG_OFFLOAD=true; shift;;
-        --cuda-graph)        ENABLE_CUDA_GRAPH=true; shift;;
-        --layer-offload)     LAYER_OFFLOAD="${2:?--layer-offload requires N}"; shift 2;;
-        --gbs)          GBS="${2:?--gbs requires N}"; shift 2;;
-        --mbs)          MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
-        --seq-len)      SEQ_LEN_OVERRIDE="${2:?--seq-len requires N}"; shift 2;;
+        --tp)              TP="${2:?--tp requires N}"; shift 2;;
+        --sp)              ENABLE_SP=true; shift;;
+        --tp-overlap)      ENABLE_TP_OVERLAP=true; shift;;
+        --fp8)             ENABLE_FP8=true; shift;;
+        --fp8-opt)         ENABLE_FP8_OPT=true; shift;;
+        --fa|--flash-attn) ENABLE_FA=true; shift;;
+        --liger)           ENABLE_LIGER=true; shift;;
+        --compile)         ENABLE_COMPILE=true; shift;;
+        --cce)             ENABLE_CCE=true; shift;;
+        --local)           ENABLE_LOCAL=true; shift;;
+        --no-jit)          ENABLE_NO_JIT=true; shift;;
+        --profile|--nsys)  ENABLE_PROFILE=true; shift;;
+        --recompute)       ENABLE_RECOMPUTE=true; shift;;
+        --full-recompute)  ENABLE_FULL_RECOMPUTE=true; shift;;
+        --opt-cpu-offload) ENABLE_OPT_CPU_OFFLOAD=true; shift;;
+        --fg-offload)      ENABLE_FG_OFFLOAD=true; shift;;
+        --cuda-graph)      ENABLE_CUDA_GRAPH=true; shift;;
+        --layer-offload)   LAYER_OFFLOAD="${2:?--layer-offload requires N}"; shift 2;;
+        --gbs)             GBS="${2:?--gbs requires N}"; shift 2;;
+        --mbs)             MBS_OVERRIDE="${2:?--mbs requires N}"; shift 2;;
+        --seq-len)         SEQ_LEN_OVERRIDE="${2:?--seq-len requires N}"; shift 2;;
         --zero)
             ZERO_STAGE="${2:?--zero requires 2 or 3}"
             if [[ "$ZERO_STAGE" != "2" && "$ZERO_STAGE" != "3" ]]; then
@@ -169,22 +182,32 @@ esac
 SEQ_LEN=4096
 [[ -n "$SEQ_LEN_OVERRIDE" ]] && SEQ_LEN="$SEQ_LEN_OVERRIDE"
 
+################ --local overrides (no TransformerEngine, TP=4, full recompute) ################
+if $ENABLE_LOCAL; then
+    TP=4
+    [[ -z "$MBS_OVERRIDE" ]] && MBS=2
+fi
+
 ################ Build experiment tag ################
 EXP_TAGS="${MODE}-${MODEL_SIZE}-${TRAINING_STEPS}s-${NODES}n-tp${TP}-seq${SEQ_LEN}"
-$ENABLE_SP         && EXP_TAGS="${EXP_TAGS}-sp"
-$ENABLE_TP_OVERLAP && EXP_TAGS="${EXP_TAGS}-tpoverlap"
-$ENABLE_FP8        && EXP_TAGS="${EXP_TAGS}-fp8"
-$ENABLE_FP8_OPT    && EXP_TAGS="${EXP_TAGS}-fp8opt"
-$ENABLE_FA         && EXP_TAGS="${EXP_TAGS}-fa"
-$ENABLE_NO_JIT     && EXP_TAGS="${EXP_TAGS}-nojit"
-$ENABLE_RECOMPUTE        && EXP_TAGS="${EXP_TAGS}-recompute"
-$ENABLE_FULL_RECOMPUTE   && EXP_TAGS="${EXP_TAGS}-fullrecompute"
-$ENABLE_OPT_CPU_OFFLOAD  && EXP_TAGS="${EXP_TAGS}-optcpuoffload"
-$ENABLE_CUDA_GRAPH       && EXP_TAGS="${EXP_TAGS}-cudagraph"
-$ENABLE_FG_OFFLOAD       && EXP_TAGS="${EXP_TAGS}-fgoffload"
+$ENABLE_SP              && EXP_TAGS="${EXP_TAGS}-sp"
+$ENABLE_TP_OVERLAP      && EXP_TAGS="${EXP_TAGS}-tpoverlap"
+$ENABLE_FP8             && EXP_TAGS="${EXP_TAGS}-fp8"
+$ENABLE_FP8_OPT         && EXP_TAGS="${EXP_TAGS}-fp8opt"
+$ENABLE_FA              && EXP_TAGS="${EXP_TAGS}-fa"
+$ENABLE_LIGER           && EXP_TAGS="${EXP_TAGS}-liger"
+$ENABLE_COMPILE         && EXP_TAGS="${EXP_TAGS}-compile"
+$ENABLE_CCE             && EXP_TAGS="${EXP_TAGS}-cce"
+$ENABLE_LOCAL           && EXP_TAGS="${EXP_TAGS}-local"
+$ENABLE_NO_JIT          && EXP_TAGS="${EXP_TAGS}-nojit"
+$ENABLE_RECOMPUTE       && EXP_TAGS="${EXP_TAGS}-recompute"
+$ENABLE_FULL_RECOMPUTE  && EXP_TAGS="${EXP_TAGS}-fullrecompute"
+$ENABLE_OPT_CPU_OFFLOAD && EXP_TAGS="${EXP_TAGS}-optcpuoffload"
+$ENABLE_CUDA_GRAPH      && EXP_TAGS="${EXP_TAGS}-cudagraph"
+$ENABLE_FG_OFFLOAD      && EXP_TAGS="${EXP_TAGS}-fgoffload"
 [[ -n "$LAYER_OFFLOAD" ]] && EXP_TAGS="${EXP_TAGS}-layeroffload${LAYER_OFFLOAD}"
-$ENABLE_PROFILE    && EXP_TAGS="${EXP_TAGS}-profile"
-[[ -n "$ZERO_STAGE" ]] && EXP_TAGS="${EXP_TAGS}-zero${ZERO_STAGE}"
+$ENABLE_PROFILE         && EXP_TAGS="${EXP_TAGS}-profile"
+[[ -n "$ZERO_STAGE" ]]  && EXP_TAGS="${EXP_TAGS}-zero${ZERO_STAGE}"
 JOB_NAME="gipfel-${EXP_TAGS}"
 
 ################ W&B block ################
@@ -205,7 +228,29 @@ else
     WANDB_BLOCK='export WANDB_MODE=disabled'
 fi
 
-################ Build optional args for sbatch ################
+################ Select train script ################
+if $ENABLE_CCE; then
+    TRAIN_SCRIPT="${WORKDIR}/pretrain_gpt_cce.py"
+elif $ENABLE_COMPILE; then
+    TRAIN_SCRIPT="${WORKDIR}/pretrain_gpt_compile.py"
+elif $ENABLE_LIGER; then
+    TRAIN_SCRIPT="${WORKDIR}/pretrain_gpt_liger.py"
+else
+    TRAIN_SCRIPT="\$MEGATRON_LM_DIR/pretrain_gpt.py"
+fi
+
+# For compile+liger combo: pass USE_LIGER env var to the compile script
+COMPILE_LIGER_ENV=""
+$ENABLE_COMPILE && $ENABLE_LIGER && COMPILE_LIGER_ENV="export USE_LIGER=true"
+
+# Liger venv (only needed for liger/cce)
+LIGER_VENV_BLOCK=""
+if $ENABLE_LIGER || $ENABLE_CCE; then
+    LIGER_VENV_BLOCK="LIGER_VENV=${WORKDIR}/liger_venv
+export PYTHONPATH=\$LIGER_VENV/lib/python3.12/site-packages:\$PYTHONPATH"
+fi
+
+################ Build optional args ################
 EXTRA_ARGS=""
 $ENABLE_FA              && EXTRA_ARGS="$EXTRA_ARGS --use-flash-attn"
 $ENABLE_NO_JIT          && EXTRA_ARGS="$EXTRA_ARGS --disable-jit-fuser"
@@ -298,6 +343,7 @@ MBS=${MBS}
 GBS=${GBS}
 SEQ_LEN=${SEQ_LEN}
 TRAINING_STEPS=${TRAINING_STEPS}
+TRAIN_SCRIPT=${TRAIN_SCRIPT}
 
 # Logging
 PROJECT_NAME=gipfelsturm
@@ -308,6 +354,8 @@ CONFIGS
 
 cat >> "$SCRIPT" << SETUP_ENV
 ${FG_OFFLOAD_ENV}
+${COMPILE_LIGER_ENV}
+${LIGER_VENV_BLOCK}
 SETUP_ENV
 
 cat >> "$SCRIPT" << 'SETUP'
@@ -331,13 +379,27 @@ export OMP_NUM_THREADS=$((SLURM_CPUS_PER_TASK/SLURM_GPUS_PER_NODE))
 MASTER_ADDR=$(hostname)
 MASTER_PORT=25678
 
+SETUP
+
+if $ENABLE_LOCAL; then
+cat >> "$SCRIPT" << 'TE_ARGS'
+TRANSFORMER_ENGINE_ARGS=(
+    --transformer-impl local
+    --no-persist-layer-norm
+    --recompute-granularity full
+    --recompute-method uniform
+    --recompute-num-layers 32
+)
+TE_ARGS
+else
+cat >> "$SCRIPT" << 'TE_ARGS'
 TRANSFORMER_ENGINE_ARGS=(
     --transformer-impl transformer_engine
     --use-precision-aware-optimizer
     --main-grads-dtype bf16
 )
-
-SETUP
+TE_ARGS
+fi
 
 cat >> "$SCRIPT" << MODEL
 NETWORK_SIZE_ARGS=(
@@ -465,7 +527,7 @@ TORCHRUN_ARGS=(
     --tee 3
 )
 
-TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $MEGATRON_LM_DIR/pretrain_gpt.py \
+TRAINING_CMD="torchrun ${TORCHRUN_ARGS[@]} $TRAIN_SCRIPT \
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \

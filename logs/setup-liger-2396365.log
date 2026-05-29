@@ -1,0 +1,53 @@
+0: Collecting liger-kernel
+0:   Using cached liger_kernel-0.8.0-py3-none-any.whl.metadata (27 kB)
+0: Requirement already satisfied: torch>=2.1.2 in /usr/local/lib/python3.12/dist-packages (from liger-kernel) (2.10.0a0+a36e1d39eb.nv26.1.42222806)
+0: Collecting triton>=2.3.1 (from liger-kernel)
+0:   Using cached triton-3.7.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl.metadata (1.7 kB)
+0: Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (3.20.3)
+0: Requirement already satisfied: typing-extensions>=4.10.0 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (4.15.0)
+0: Requirement already satisfied: setuptools in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (80.10.1)
+0: Requirement already satisfied: sympy>=1.13.3 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (1.14.0)
+0: Requirement already satisfied: networkx>=2.5.1 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (3.6.1)
+0: Requirement already satisfied: jinja2 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (3.1.6)
+0: Requirement already satisfied: fsspec>=0.8.5 in /usr/local/lib/python3.12/dist-packages (from torch>=2.1.2->liger-kernel) (2025.10.0)
+0: Requirement already satisfied: mpmath<1.4,>=1.1.0 in /usr/local/lib/python3.12/dist-packages (from sympy>=1.13.3->torch>=2.1.2->liger-kernel) (1.3.0)
+0: Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib/python3.12/dist-packages (from jinja2->torch>=2.1.2->liger-kernel) (3.0.3)
+0: Using cached liger_kernel-0.8.0-py3-none-any.whl (403 kB)
+0: Using cached triton-3.7.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl (188.5 MB)
+0: Installing collected packages: triton, liger-kernel
+0: Successfully installed liger-kernel-0.8.0 triton-3.7.0
+0: SUCCESS
+0: Name: liger_kernel
+0: Version: 0.8.0
+0: Summary: Efficient Triton kernels for LLM Training
+0: Home-page: 
+0: Author: 
+0: Author-email: 
+0: License: BSD 2-CLAUSE LICENSE
+0: Copyright 2024 LinkedIn Corporation 
+0: All Rights Reserved.
+0: Redistribution and use in source and binary forms, with or
+0: without modification, are permitted provided that the following
+0: conditions are met:
+0: 1. Redistributions of source code must retain the above copyright
+0: notice, this list of conditions and the following disclaimer.
+0: 2. Redistributions in binary form must reproduce the above
+0: copyright notice, this list of conditions and the following
+0: disclaimer in the documentation and/or other materials provided
+0: with the distribution.
+0: THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+0: "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+0: LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+0: A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+0: HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+0: SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+0: LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SER
+0: VICES; LOSS OF USE,
+0: DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+0: THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+0: (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+0: OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+0: 
+0: Location: /iopsstor/scratch/cscs/course_00207/lsaie-ss26-gipfelsturm/liger_venv/lib/python3.12/site-packages
+0: Requires: torch, triton
+0: Required-by: 
