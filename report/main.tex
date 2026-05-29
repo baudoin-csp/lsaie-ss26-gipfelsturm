@@ -2,6 +2,8 @@
 
 \documentclass[10pt,twocolumn,letterpaper]{article}
 
+\usepackage{float} % Add this to your document preamble
+
 %%%%%%%%% PAPER TYPE
 %\usepackage{cvpr}              % To produce the CAMERA-READY version
 %\usepackage[review]{cvpr}      % To produce the REVIEW version
@@ -33,11 +35,12 @@
 \title{Gipfelsturm: Maximizing LLM Training Throughput on GH200 GPUs\thanks{This work was done as part of the Large-Scale AI Engineering course of ETH Zurich.}}
 
 %%%%%%%%% AUTHORS - PLEASE UPDATE
-\author{Baudoin Coispeau
+\author{
+Rayane Charif Chefchaouni
+\and
+Baudoin Coispeau
 \and
 Gaspard Thoral
-\and
-Rayane Charif Chefchaouni
 }
 
 \begin{document}
@@ -47,116 +50,109 @@ Rayane Charif Chefchaouni
 \section{Project Overview}
 \label{sec:intro}
 
-\textit{Gipfelsturm} (German: ``summit attempt'') targets \textbf{Challenge 2}: achieving the highest tokens/sec/GPU for a given model size on a single node (4$\times$GH200 GPUs) of the CSCS Alps supercomputer. We use Megatron-LM~\cite{shoeybi2019megatron} as the training framework and systematically explore three orthogonal optimization axes — compute kernels, precision \& memory strategies, and intra-node parallelism — before combining the best techniques into a single winning stack.
+\textit{Gipfelsturm} (German: ``summit attempt'') targets \textbf{Challenge 2}: achieving the highest tokens/sec/GPU for a given model size on a single node (4$\times$GH200 GPUs) of the CSCS Alps supercomputer. We use Megatron-LM ~\cite{shoeybi2019megatron} as the training framework and systematically explore three orthogonal optimization axes : compute kernels, precision, memory strategies, and intra-node parallelism. The best techniques are then combined.
 
-Our three-phase approach (familiarization, independent exploration, integration) lets each team member own one axis while sharing a common benchmark harness. The final configuration targets a $\sim$3B parameter model on a single GH200 node, with a stretch goal of $\sim$32B with tensor parallelism (TP=4).
+Our three-phase approach (familiarization, independent exploration, integration) lets each team member own one axis while sharing a common benchmark harness. The final configuration targets a $\sim$8B parameter model on a single GH200 node with 4 GPUs.
 
 
 \section{Implementation}
 \label{sec:implementation}
 
-\subsection{Infrastructure \& Baseline}
+\paragraph{Intra-node Parallelism.}
 
-All training is orchestrated through a \texttt{launch.sh} script that generates self-contained SLURM batch scripts and submits them to the Clariden partition of the Swiss AI Initiative's Alps cluster. The cluster provides GH200 compute nodes (4 GPUs per node, connected via NVLink-C2C) linked by the Slingshot-11 interconnect.
+Alps has two network speeds: inside a node GPUs talk over NVLink at about 340 GB/s and between nodes over Slingshot at about 93 GB/s, roughly 3.7$\times$ slower. We know that tensor parallelism adds all-reduces in every layer, in both the forward and backward pass. That traffic is likely only tolerable at NVLink speed, so any TP we use should stay inside a node.
 
-We use the \textbf{alps3} container image (NGC PyTorch 26.01-py3), which includes patched NCCL 2.29.3-1, libfabric 2.5.0a1, OpenMPI 5.0.9, and nvshmem 3.4.5-0. Training data is the \textbf{Nemotron-ClimbMix} \texttt{climbmix\_small} subset ($\sim$6--12B tokens, GPT-2 BPE tokenizer), pre-converted to Megatron's binary format and stored on capstor.
+TP tends to buy memory at the cost of throughput. Each shard shrinks the local GEMMs and adds collectives that are hard to fully hide. We only want to pay that price when memory forces us to.
 
-The baseline model architecture follows a standard transformer with RoPE positional embeddings, GQA, SwiGLU activations, and RMSNorm — matching the configuration shipped with Megatron-LM \texttt{core\_v0.16.1}. Default training hyperparameters: sequence length 4096, global batch size 256, AdamW ($\beta_1{=}0.9$, $\beta_2{=}0.95$), weight decay 0.1, learning rate $3\times10^{-4}$, BF16 mixed precision with TransformerEngine (\texttt{--transformer-impl transformer\_engine}).
+The 8B model fits at TP=1 with a peak of about 88 GB per GPU, out of 96 GB. The theoretical footprint is higher. Indeed, weights and optimizer state alone are roughly 63 GB and untouched activations would likely push the total past capacity. Two things bring it down: (1) the distributed optimizer shards the optimizer state across the four DP ranks and (2) selective activation recomputation drops the heaviest activations. With both on we land at 88 GB, which suggests there is little left for TP to solve.
 
-\subsection{Megatron-LM Patches}
+That gives us a fairly clear prediction. Any TP $>$ 1 should mostly cost throughput here. It would shrink the GEMMs and add collectives without freeing memory we appear to need. The same reasoning suggests sequence parallelism is unlikely to help. It requires TP $\geq$ 2, and the activation memory it would save is memory we do not seem to be short on.
 
-Local modifications to the Megatron-LM submodule are managed as isolated patch files (applied automatically by \texttt{launch.sh} via \texttt{git apply}). This keeps the submodule clean and upgradeable. The first patch (\texttt{0001-log-tokens-per-sec-to-wandb.patch}) adds tokens/sec/GPU logging to stdout, TensorBoard, and W\&B inside \texttt{training\_log()}, since Megatron-LM natively only reports TFLOP/s/GPU.
-
-\subsection{Shared Benchmark Harness}
-
-A canonical benchmark script produces a single throughput number (tokens/sec/GPU averaged over 50 warm-up steps) for any model/configuration pair. All runs are logged to a shared W\&B project under the \texttt{gipfelsturm} experiment name, with standardized metrics: tokens/sec, MFU, GPU memory utilization, and loss. This ensures every team member's ablations are directly comparable.
-
-\subsection{Optimization Axes}
-
-\paragraph{Baudoin — Intra-node Parallelism.}
-We sweep tensor parallelism from TP=1 to TP=4 (exploiting the 4 GH200 GPUs on a single node), with and without sequence parallelism. We also tune TP communication overlap (\texttt{--overlap-grad-reduce}, \texttt{--overlap-param-gather}) and sweep global batch size with gradient accumulation steps to identify the optimal MFU operating point.
-
-\paragraph{Gaspard — Precision \& Memory.}
-Starting from the BF16 baseline, we enable FP8 training via TransformerEngine and verify that loss curves remain aligned. We then benchmark ZeRO-1/2/3 optimizer state sharding for throughput and memory, and evaluate activation (gradient) checkpointing as a memory-capacity relief valve. Each configuration is placed on a memory–throughput Pareto chart.
-
-\paragraph{Rayane — Compute Kernels.}
+\paragraph{Precision \& Memory.}
+We study precision and memory as a joint optimization axis. Starting from a BF16
+baseline, we evaluate FP8 training with TransformerEngine and FP8 optimizer states
+to reduce HBM usage while exploiting GH200-native FP8 tensor cores. We then test CPU
+offloading of optimizer states, together with reduced sequence length, as a mechanism
+to trade sequence length for larger micro-batch size at TP=1. We also assess activation
+recomputation as a memory--throughput tradeoff and compare BF16 and FP8 loss curves
+over 500 steps to verify numerical stability.
+\paragraph{Compute Kernels.}
 NSYS profiling identifies the dominant kernels in the baseline configuration. We then evaluate FlashAttention (\texttt{--use-flash-attn}), Liger-Kernel fused operators (RMSNorm, SwiGLU, cross-entropy), Cut Cross-Entropy, and \texttt{torch.compile}. Each optimization is measured independently and stacked, probing whether kernel-level fusion offers any headroom on top of the TransformerEngine backend.
 
 \section{Experiments}
 \label{sec:experiments}
 
-\subsection{Experimental Setup}
-
-All throughput measurements are performed over 50 training steps (skipping the first 2 for warm-up) at sequence length 4096 on a single GH200 node (4 GPUs). The metric reported is \textbf{tokens/sec/GPU}. Model sizes follow the configurations in Table~\ref{tab:baselines}; we focus compute-kernel exploration on the 8B model (TP=1, PP=1) to isolate kernel-level effects from parallelism overhead.
-
-\begin{table}[h]
-  \caption{Single-GPU throughput baselines (TP=1, PP=1, SEQ=4096, BF16).}
-  \label{tab:baselines}
-  \centering
-  \small
-  \begin{tabular}{@{}lcc@{}}
-    \toprule
-    Model & MBS & tok/s/GPU \\
-    \midrule
-    125M  & 16 & 54{,}671 \\
-    350M  & 8  & 62{,}711 \\
-    760M  & 6  & 74{,}994 \\
-    1.5B  & 4  & 34{,}054 \\
-    3B    & 4  & 19{,}842 \\
-    8B    & 2  & 10{,}882 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
 \subsection{Parallelism Sweep}
 
-Table~\ref{tab:tp_sweep} shows the effect of tensor parallelism on the 3B model. Sequence parallelism is evaluated on top of TP=4 and the communication overlap flags are toggled independently. \TODO{Fill with actual measured numbers.}
+\paragraph{Tensor parallelism ablation.}
+Figure~\ref{fig:tp_ablation} reports per-GPU throughput as a function of the tensor parallelism degree, with TP$\cdot$DP$=4$ held fixed on a single GH200 node and the global batch size (256) and sequence length (4096) kept constant across runs. The trend is consistent with the prediction in Section~\ref{sec:implementation}: throughput per GPU appears to decrease as TP grows, with TP=1 giving the highest rate, and the sequence parallel variants we tried do not seem to recover the loss. Based on these results we keep TP=1, DP=4 as the single-node configuration and drop the TP $>$ 1 and sequence parallel runs from the rest of the study.
 
-\begin{table}[h]
-  \caption{Tensor parallelism sweep on the 3B model (single GH200 node).}
-  \label{tab:tp_sweep}
-  \centering
-  \small
-  \begin{tabular}{@{}lccc@{}}
-    \toprule
-    Config & TP & Seq.~Par. & tok/s/GPU \\
-    \midrule
-    Baseline      & 1 & --   & \TODO{X} \\
-    TP=2          & 2 & --   & \TODO{X} \\
-    TP=4          & 4 & --   & \TODO{X} \\
-    TP=4 + SP     & 4 & Yes  & \TODO{X} \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\linewidth]{plot_TP.png}
+    \caption{Per-GPU throughput vs.\ tensor-parallelism degree. Median over iterations 11--20, TP$\cdot$DP$=4$ on a single GH200 node.}
+    \label{fig:tp_ablation}
+\end{figure}
 
 \subsection{Precision \& Memory}
 
-Table~\ref{tab:precision} summarizes the throughput and peak GPU memory for each precision and memory strategy. \TODO{Fill with actual measured numbers.}
+BF16 serves as the baseline configuration. Enabling FP8 with TransformerEngine and
+quantizing Adam moment states to FP8 improves throughput from 10,945 to 15,306 tok/s/GPU,
+a +39.8\% gain over BF16.
 
-\begin{table}[h]
-  \caption{Precision and memory strategy comparison on the 3B model.}
-  \label{tab:precision}
+FP8 alone was not viable at this scale. In our setup, TransformerEngine delayed-scaling
+metadata, including amax history buffers (\texttt{amax\_history\_len=1024}), offset the
+expected memory savings and caused OOM; FP8 therefore had to be paired with FP8 optimizer
+states to achieve a net memory reduction.
+
+\begin{table}[H]
   \centering
   \small
-  \begin{tabular}{@{}lccc@{}}
+  \begin{tabular}{@{}lccccc@{}}
     \toprule
-    Config & tok/s/GPU & Mem (GB) \\
+    Config & Seq len & MBS & tok/s/GPU & $\Delta\%$ \\
     \midrule
-    BF16 (baseline)        & \TODO{X} & \TODO{X} \\
-    FP8 (TransformerEngine)& \TODO{X} & \TODO{X} \\
-    BF16 + ZeRO-1          & \TODO{X} & \TODO{X} \\
-    BF16 + ZeRO-2          & \TODO{X} & \TODO{X} \\
-    BF16 + Grad.~Ckpt.     & \TODO{X} & \TODO{X} \\
+    BF16 (baseline)             & 4096 & 2 & 10,945 & 0.0\% \\
+    FP8 + FP8-Opt               & 4096 & 2 & 15,306 & +39.8\% \\
+    FP8 + FP8-Opt + CPU         & 2048 & 4 & 16,669 & +52.3\% \\
+    FP8 + FP8-Opt + CPU         & 1024 & 8 & 16,717 & +52.7\% \\
     \bottomrule
   \end{tabular}
+  \caption{Precision and memory strategy comparison on the 8B model, single node 4$\times$ GH200.}
+  \label{tab:precision}
 \end{table}
 
-\subsection{Compute Kernel Ablation}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{relative_throughput_gaspard.png}
+    \caption{Relative throughput normalized to the BF16 baseline.}
+    \label{fig:relative-throughput}
+\end{figure}
 
-We benchmark five kernel-level optimizations on the 8B model (TP=1, PP=1, BF16, GBS=256, SEQ=4096) using TransformerEngine as the backend. Each configuration is measured over 50 steps; Table~\ref{tab:kernels} reports the average of steps 3--50.
+\subsubsection{Memory Reduction Strategies}
+
+The main memory gain comes from shortening the sequence and using the recovered headroom
+to increase micro-batch size. In particular, reducing sequence length from 4096 to 2048
+allowed MBS to increase from 2 to 4, and reducing it to 1024 allowed MBS to increase to 8.
+
+This trade is not memory-neutral, even when $\text{seq len} \times \text{MBS}$ is held
+constant. Attention-related activations grow disproportionately with sequence length, so
+shorter sequences free more memory than a linear token-count argument would suggest.
+CPU offloading further reduces HBM pressure by moving optimizer states to Grace host
+memory, but in these experiments its role is secondary to the sequence-length--micro-batch tradeoff.
+
+\subsubsection{ZeRO and Gradient Checkpointing}
+
+ZeRO-1 is enabled in all runs. ZeRO-2, ZeRO-3, and activation recomputation were not
+pursued at 8B scale because this regime is not sufficiently memory-constrained to justify
+their additional communication or recompute overhead.
+\subsection{Compute Kernel Ablation}
+\label{sec:kernels}
+
+We benchmark five kernel-level optimizations on the 8B model (TP=1, PP=1, BF16, GBS=256, SEQ=4096) using TransformerEngine as the backend. Each configuration is measured over 50 steps; Table~\ref{tab:kernels} reports the mean of steps 3--50. All runs are logged to the W\&B project \href{https://wandb.ai/lsai-project-26/gipfelsturm}{\texttt{lsai-project-26/gipfelsturm}}.
 
 \begin{table}[h]
-  \caption{Kernel optimization ablation (8B model, TP=1, TransformerEngine backend).}
+  \caption{Kernel optimization ablation (8B model, TP=1, TransformerEngine backend). W\&B run IDs in parentheses.}
   \label{tab:kernels}
   \centering
   \small
@@ -164,11 +160,11 @@ We benchmark five kernel-level optimizations on the 8B model (TP=1, PP=1, BF16, 
     \toprule
     Config & tok/s/GPU & $\Delta$ \\
     \midrule
-    Baseline (BF16 + TE)         & 11{,}051 & ---       \\
-    + FlashAttention             & 10{,}726 & $-$2.9\%  \\
-    + Liger RMSNorm              & 10{,}945 & $-$1.0\%  \\
-    + FA + Liger RMSNorm         & 10{,}743 & $-$2.8\%  \\
-    + Cut Cross-Entropy (CCE)    & 10{,}865 & $-$1.7\%  \\
+    Baseline (BF16 + TE) {\tiny\texttt{ar2wlr1u}}     & 11{,}051 & ---       \\
+    + FlashAttention {\tiny\texttt{iwp9kyas}}          & 10{,}726 & $-$2.9\%  \\
+    + Liger RMSNorm {\tiny\texttt{4bffxrsh}}           & 10{,}945 & $-$1.0\%  \\
+    + FA + Liger RMSNorm {\tiny\texttt{gj9wa0oz}}      & 10{,}743 & $-$2.8\%  \\
+    + Cut Cross-Entropy {\tiny\texttt{jwa5kvnw}}       & 10{,}865 & $-$1.7\%  \\
     \texttt{torch.compile}       & \multicolumn{2}{c}{incompatible$^\dagger$} \\
     \bottomrule
   \end{tabular}
@@ -176,37 +172,71 @@ We benchmark five kernel-level optimizations on the 8B model (TP=1, PP=1, BF16, 
   {\footnotesize $^\dagger$\texttt{torch.compile} raises \texttt{AssertionError} in Megatron-LM's DDP forward pre-hook (\texttt{core\_v0.16.1}).}
 \end{table}
 
-\textbf{All optimizations show neutral-to-negative impact} ($-$1\% to $-$3\%). NSYS profiling confirms the root cause: TransformerEngine occupies $\sim$99.8\% of the default CUDA stream with its own fused \texttt{nvte\_*} kernels throughout each iteration. The GPU is already saturated — there is no idle time for additional kernel fusion to exploit.
+\textbf{All optimizations show neutral-to-negative impact} ($-$1\% to $-$3\%). NSYS profiling (trace file included in submission as \texttt{nsys\_traces/trace\_baseline.nsys-rep}) confirms the root cause: TransformerEngine occupies $\sim$99.8\% of the default CUDA stream with its own fused \texttt{nvte\_*} kernels throughout each iteration. The GPU is already saturated — there is no idle time for additional kernel fusion to exploit.
 
-Concretely: (1)~\textbf{FlashAttention} is redundant because TE's \texttt{TEDotProductAttention} uses an equivalent fused attention path internally; adding \texttt{--use-flash-attn} on top of TE introduces a conflict that costs 2.9\%. (2)~\textbf{Liger-Kernel} v0.8.0 does not yet support \texttt{apply\_liger\_kernel\_to\_megatron} (open PR \#1207 as of May 2026); we manually patched \texttt{FusedRMSNorm} with \texttt{LigerRMSNorm}, but TE overrides the norm computation with its own fused path, rendering the patch a near no-op with $-$1\% overhead from the wrapper. (3)~\textbf{torch.compile} is incompatible with Megatron-LM's DDP hook implementation in \texttt{core\_v0.16.1}, causing an \texttt{AssertionError} on \texttt{disable\_forward\_pre\_hook()} before training begins.
+Concretely: (1)~\textbf{FlashAttention} is redundant because TE's \texttt{TEDotProductAttention} uses an equivalent fused attention path internally; adding \texttt{--use-flash-attn} on top of TE introduces a conflict that costs 2.9\%. (2)~\textbf{Liger-Kernel} v0.8.0 does not yet support \texttt{apply\_liger\_kernel\_to\_megatron} (open PR \#1207 as of May 2026); we manually patched \texttt{FusedRMSNorm} with \texttt{LigerRMSNorm}, but TE overrides the norm computation with its own fused path, rendering the patch a near no-op with $-$1\% overhead from the wrapper. (3)~\textbf{torch.compile} is incompatible with Megatron-LM's DDP hook implementation in \texttt{core\_v0.16.1}.
 
-\begin{figure}[h]
+\begin{figure}[H]
   \centering
-  \includegraphics[width=\linewidth]{../analysis/pareto_chart.png}
-  \caption{Kernel optimization Pareto on the 8B model. All techniques show neutral-to-negative impact when applied on top of the TransformerEngine backend.}
+  \includegraphics[width=\linewidth]{pareto_chart.png}
+  \caption{Kernel optimization results on the 8B model. Left: throughput under TE backend — all optimizations show neutral-to-negative impact. Right: removing TransformerEngine (local TP=4) yields 2.3$\times$ lower throughput, confirming TE is a prerequisite.}
   \label{fig:pareto}
 \end{figure}
 
-\textbf{TransformerEngine is a prerequisite, not an optimization.} To quantify TE's contribution, we ran the same 8B model with \texttt{--transformer-impl local} (Megatron's native PyTorch implementation). TP=1 and TP=2 configurations failed with CUDA OOM (96\,GB GH200) — without TE's fused kernels, the O($n^2$) attention matrix and unoptimized gradient buffers exceed GPU capacity at GBS=256. Using TP=4 (which splits the model across all 4 GPUs, reducing per-GPU memory) resolves the OOM and yields measurable results: \textbf{4{,}878 tok/s/GPU}, which is $\mathbf{2.26\times}$ \textbf{slower} than the TE TP=1 baseline (11{,}051 tok/s/GPU). This 2.3$\times$ gap confirms that TransformerEngine is not an optional add-on but a hardware-level prerequisite for efficient 8B model training on GH200.
+\textbf{TransformerEngine is a prerequisite, not an optimization.} To quantify TE's contribution, we ran the same 8B model with \texttt{--transformer-impl local} (Megatron's native PyTorch implementation). TP=1 and TP=2 failed with CUDA OOM (96\,GB GH200) — without TE's fused kernels, the O($n^2$) attention matrix and unoptimized gradient buffers exceed GPU capacity at GBS=256. Using TP=4 resolves the OOM and yields \textbf{4{,}878 tok/s/GPU}, which is \textbf{2.26$\times$ slower} than the TE TP=1 baseline. This confirms that TransformerEngine is not an optional add-on but a hardware-level prerequisite for efficient 8B model training on GH200.
 
 
 \section{Results}
 \label{sec:results}
 
-\subsection{Compatibility Matrix}
+The final configuration is FP8 + FP8-Opt + CPU offloading with sequence length 2048 and
+micro-batch size 4. We verify that this configuration does not compromise training
+stability by comparing its loss and gradient-norm trajectories against the BF16 baseline.
 
-Before the final integration run, we identify which optimization pairs are safe to combine. Known compatibility issues include \texttt{torch.compile} with tensor parallelism (graph-break risk) and FP8 with Liger-Kernel (mixed quantization-aware vs. fused kernels). A full compatibility matrix will be reported in the final version.
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{baseline_lm_loss.png}
+        \caption{BF16 baseline loss.}
+        \label{fig:baseline-lm-loss}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{2048_lm_loss.png}
+        \caption{Winning stack loss.}
+        \label{fig:winning-lm-loss}
+    \end{subfigure}
 
-\subsection{Winning Stack}
+    \vspace{0.8em}
 
-\TODO{Report the final combined configuration (kernel opts + precision + parallelism) and its tokens/sec/GPU result on the 3B model (TP=4, single node). Include comparison against the baseline and MFU number. For the stretch goal, report the $\sim$32B result with TP=4.}
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{baseline_grad_norm.png}
+        \caption{BF16 baseline grad norm.}
+        \label{fig:baseline-grad-norm}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[t]{0.49\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{2048_grad_norm.png}
+        \caption{Winning stack grad norm.}
+        \label{fig:winning-grad-norm}
+    \end{subfigure}
 
+    \caption{Training stability comparison between the BF16 baseline and the winning stack
+    (FP8 + FP8-Opt + CPU offloading, seq len 2048, MBS 4).}
+    \label{fig:stability-comparison}
+\end{figure}
+
+Across training, the gradient norm remains bounded and the language-model loss decreases
+overall, indicating that the winning stack is numerically stable.
 \subsection{Discussion}
 
-Our three-axis methodology isolates the contribution of each optimization family and identifies which combinations stack cleanly. The patch-based workflow for Megatron-LM ensures that infrastructure changes remain reviewable and upgradeable independently of the optimization code.
+Our three-axis methodology isolates each optimization family's contribution and reveals a clear hierarchy. The \textbf{precision axis} (Gaspard) delivers the largest gains: FP8 with FP8 optimizer states and CPU offloading yields \textbf{+52.7\%} over BF16. The \textbf{parallelism axis} (Baudoin) confirms TP=1 is optimal for 8B on a single node, since the model fits in memory without tensor parallelism and TP overhead outweighs any benefit. The \textbf{compute-kernel axis} (Rayane) finds that application-layer kernel optimizations (FlashAttention, Liger-Kernel, \texttt{torch.compile}) provide no benefit on top of TransformerEngine — TE's hardware-aware CUDA kernels already saturate the GPU at $\sim$99.8\% stream utilization, leaving no idle time for additional fusion.
 
-\textbf{Key finding from the compute-kernel axis:} on GH200 with TransformerEngine, traditional application-layer kernel optimizations (FlashAttention, Liger-Kernel, torch.compile) offer no throughput benefit. The performance ceiling is already set by TE's hardware-aware CUDA kernels, which achieve $\sim$99.8\% GPU stream utilization. Future work on this axis should target operations outside TE's scope — notably the cross-entropy loss over large vocabularies. The integration axis will clarify whether FP8 (Gaspard) and optimal TP (Baudoin) unlock headroom beyond the TE baseline. \TODO{Discuss key findings and unexpected conflicts once experiments are complete.}
-
+A key cross-axis finding is that TransformerEngine is not an optional add-on: removing it causes 2.3$\times$ throughput regression even at TP=4. This has practical implications for kernel research on GH200 — future kernel optimization efforts should target the narrow set of operations outside TE's scope (e.g.\ vocabulary-parallel cross-entropy), rather than re-implementing what TE already fuses.
 
 \cleardoublepage
 {
@@ -217,3 +247,4 @@ Our three-axis methodology isolates the contribution of each optimization family
 
 
 \end{document}
+ 
